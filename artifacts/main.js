@@ -186,7 +186,7 @@ export default class Artifacts extends View {
       .when(clickable, (e) => e.cursor_pointer().hover((s) => s.bg(t.hover)).on_click((_e, cx) => { this.collapsed[agent.address] = !folded; cx.notify(); }))
       .when(clickable, (e) => e.child(svg(`mods/files/chevron-${folded ? "right" : "down"}.svg`).size(12).flex_none().text_color(t.dim)))
       .child(div().size(6).rounded(3).flex_none().bg(t[agent.status] ?? t.idle))
-      .child(div().flex_1().min_w(0).truncate().text_size(12).text_color(t.muted).child(agent.title || scan?.session_name || agent.address))
+      .child(div().flex_1().min_w(0).truncate().text_size(12).text_color(t.muted).child(agent.tab_name || agent.title || scan?.session_name || agent.address))
       .child(div().flex_none().text_size(10.5).text_color(t.dim).child(scan ? (scan.session ? `${scan.published.length}` : "no session") : "…"));
 
     const body = v_flex().id("artifacts-list").flex_1().min_h(0).overflow_y_scrollbar().p(6).gap(2)
@@ -196,11 +196,12 @@ export default class Artifacts extends View {
       .children(entries.map(({ agent, scan }) => {
         const items = [...(scan?.published ?? []), ...(this.showTouched ? scan?.touched ?? [] : [])];
         const folded = !single && Boolean(this.collapsed[agent.address]);
+        // The group line names the tab; in Agent view there is one agent, so no group.
         return v_flex().flex_none().gap(1)
-          .child(agentLine(agent, scan, folded, !single))
-          .when(!folded && scan && !scan.session, (el) => el.child(div().pl(30).pb(6).text_size(11).text_color(t.dim).child("Not a Claude Code session Herdr can read yet.")))
-          .when(!folded && scan?.session && !scan.transcript, (el) => el.child(div().pl(30).pb(6).text_size(11).text_color(t.dim).child("No transcript yet; it appears after the first message.")))
-          .when(!folded && scan?.transcript && !items.length, (el) => el.child(div().pl(30).pb(6).text_size(11).text_color(t.dim).child("Nothing published in this conversation yet.")))
+          .when(!single, (el) => el.child(agentLine(agent, scan, folded, true)))
+          .when(!folded && scan && !scan.session, (el) => el.child(div().pl(single ? 8 : 30).pb(6).text_size(11).text_color(t.dim).child("Not a Claude Code session Herdr can read yet.")))
+          .when(!folded && scan?.session && !scan.transcript, (el) => el.child(div().pl(single ? 8 : 30).pb(6).text_size(11).text_color(t.dim).child("No transcript yet; it appears after the first message.")))
+          .when(!folded && scan?.transcript && !items.length, (el) => el.child(div().pl(single ? 8 : 30).pb(6).text_size(11).text_color(t.dim).child("Nothing published in this conversation yet.")))
           .when(!folded, (el) => el.children(items.map((a) => this.row(a, t))));
       }));
 

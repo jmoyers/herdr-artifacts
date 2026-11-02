@@ -18,9 +18,10 @@ scroll away in the terminal. A switch widens it to every agent in the space.
   conversation read or opened artifacts it didn't publish), an **Agent /
   Space** segmented switch (10.5 px, `selected` background on the active
   side), and a refresh icon that turns while a scan runs.
-- One line per agent (26 px): a 6 px status dot in the agent's status color,
-  the agent's title in 12 px `muted`, and its artifact count in `dim` on the
-  right. In Space mode the line has a chevron and collapses its section.
+- In Space mode, one line per agent (26 px): a chevron, a 6 px status dot in
+  the agent's status color, the agent's tab name in 12 px `muted`, and its
+  artifact count in `dim` on the right; clicking it collapses the section.
+  Agent mode has no group line, just the rows.
 - One row per artifact (28 px): page icon in `accent` (`dim` for "seen"
   rows), title in `foreground` (truncated), then `v12` in `muted` (or
   "earlier" / "seen" in `dim`), then how long ago in `dim` (`now`, `5m`,
