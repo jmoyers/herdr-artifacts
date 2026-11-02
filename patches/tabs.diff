@@ -1,0 +1,57 @@
+--- a/mods/tabs/main.js
++++ b/mods/tabs-artifacts/main.js
+@@ -1,6 +1,6 @@
+ import { View, div, svg, image } from "gpui-kit";
+ import { h_flex } from "gpui-base";
+-import { spaces, panes, run, openOverlay, theme, window, shared, layout, settings } from "herdr";
++import { spaces, panes, run, openOverlay, theme, window, shared, layout, settings, nextCommand } from "herdr";
+ 
+ function find(node, id) {
+   if (node?.id === id) return node;
+@@ -12,9 +12,22 @@
+ }
+ 
+ export default class Tabs extends View {
+-  init() {
++  init(_props, cx) {
+     this.pressed = null;
+     this.panels = JSON.parse(localStorage.getItem("panels") ?? "{}");
++    // "tabs-artifacts.artifacts" (a key in keys.json, or the palette) toggles the
++    // Artifacts panel the way its button does; "files" and "changes" likewise.
++    cx.spawn(async (cx) => {
++      for (;;) {
++        const c = await nextCommand();
++        if (!["artifacts", "files", "changes"].includes(c)) continue;
++        const root = layout(), panel = find(root, "panel"), body = find(root, "panel-body");
++        const on = panel && !panel.hidden && body?.active === c;
++        if (on) run("layout.hide", { id: "panel" });
++        else { run("layout.select", { stack: "panel-body", child: c }); run("layout.show", { id: "panel" }); }
++        cx.notify();
++      }
++    });
+   }
+ 
+   // The side panel is remembered per space: switching shows that space's choice
+@@ -77,7 +90,8 @@
+       ? Math.max(10, (root.traffic_lights[0] + 64) / settings().zoom - (sidebar?.hidden ? 0 : sidebar?.size?.px ?? 0))
+       : 10;
+     const panel = find(root, "panel"), body = find(root, "panel-body");
+-    const enabled = shared("workspace.panels") ?? ["files", "changes"];
++    // Artifacts is always offered; Files and Changes follow the welcome's choice.
++    const enabled = [...(shared("workspace.panels") ?? ["files", "changes"]), "artifacts"];
+     this.syncPanel(space, panel, body, enabled);
+     const panelButton = (id, label, icon) => {
+       const on = panel && !panel.hidden && body?.active === id;
+@@ -96,8 +110,9 @@
+       .child(button("tab-new", "+", () => openOverlay({ mod: "new-menu", kind: "popup", width: 250, height: 512 })))
+       .when(enabled.includes("files"), el => el.child(panelButton("files", "Files", "mods/files/file.svg")))
+       .when(enabled.includes("changes"), el => el.child(panelButton("changes", "Changes", "mods/changes/changes.svg")))
+-      .when(w?.buttons, el => el.child(button("minimize", w.platform === "windows" ? svg("mods/tabs/win-min.svg").size(16) : "−", () => run("window.minimize")))
+-        .child(button("maximize", w.platform === "windows" ? svg(`mods/tabs/${w.maximized ? "win-restore" : "win-max"}.svg`).size(16) : "□", () => run("window.maximize")))
+-        .child(button("close-window", w.platform === "windows" ? svg("mods/tabs/win-close.svg").size(16) : svg("mods/pane/close.svg").size(13), () => run("window.close"))));
++      .child(panelButton("artifacts", "Artifacts", "mods/artifacts/artifact.svg"))
++      .when(w?.buttons, el => el.child(button("minimize", w.platform === "windows" ? svg("mods/tabs-artifacts/win-min.svg").size(16) : "−", () => run("window.minimize")))
++        .child(button("maximize", w.platform === "windows" ? svg(`mods/tabs-artifacts/${w.maximized ? "win-restore" : "win-max"}.svg`).size(16) : "□", () => run("window.maximize")))
++        .child(button("close-window", w.platform === "windows" ? svg("mods/tabs-artifacts/win-close.svg").size(16) : svg("mods/pane/close.svg").size(13), () => run("window.close"))));
+   }
+ }

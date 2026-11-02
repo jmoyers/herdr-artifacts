@@ -1,0 +1,10 @@
+{
+ "changes": [
+  "tabs block -> mod tabs-artifacts",
+  "panel-body stack += block artifacts (mod artifacts)"
+ ],
+ "cloned_from": {
+  "name": "main",
+  "version": "0.1.12"
+ }
+}
