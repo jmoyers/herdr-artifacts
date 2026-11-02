@@ -48,7 +48,7 @@ export default class Artifacts extends View {
     this.loading = false;
     this.error = null;
     this.showTouched = false;
-    this.open = null;         // url of the expanded row
+    this.hovered = null;      // url of the row under the pointer
     this.collapsed = {};      // address -> true (space view)
     this.moreLinks = {};      // address -> true: show every link, not the first few
     this.linksOpen = {};      // address -> true: Agent view's Links section expanded
@@ -134,43 +134,55 @@ export default class Artifacts extends View {
     });
   }
 
+  // A copy control that only appears while its row is hovered (or just copied):
+  // click it to copy the URL; a check mark confirms for 1.5 s. The column is
+  // always reserved so the row's numbers don't shift.
+  copyControl(url, t, visible) {
+    const copied = this.copied === url;
+    if (!visible && !copied) return div().size(20).flex_none();
+    return div().id(`copy-${url}`).size(20).flex_none().flex().items_center().justify_center().rounded(5).cursor_pointer()
+      .text_color(copied ? t.done ?? t.accent : t.dim).hover((s) => s.bg(t.raised).text_color(t.foreground))
+      .on_click((_e, cx) => {
+        cx.stop_propagation();
+        cx.write_to_clipboard(url);
+        this.copied = url; cx.notify();
+        cx.timer.after(1500, (cx) => { if (this.copied === url) this.copied = null; cx.notify(); });
+      })
+      .child(svg(`mods/artifacts/${copied ? "check" : "copy"}.svg`).size(12));
+  }
+
+  hoverRow(url) {
+    return (over, cx) => {
+      const next = over ? url : (this.hovered === url ? null : this.hovered);
+      if (next !== this.hovered) { this.hovered = next; cx.notify(); }
+    };
+  }
+
+  // One artifact: click opens it in the browser; hovering reveals a copy button.
   row(a, t, indent = 0) {
-    const open = this.open === a.url;
     // "summarized": named in a compaction summary, so published before the
     // transcript was cut; its versions are not on record.
     const published = a.publishes > 0 || Boolean(a.summarized);
     const tag = published ? (a.version ? `v${a.version}` : "earlier") : "seen";
-    return v_flex().id(`art-${a.url}`).flex_none().rounded(7).when(open, (e) => e.bg(t.selected)).hover((s) => s.bg(open ? t.selected : t.hover))
-      .child(h_flex().h(30).pl(8 + indent).pr(8).gap(8).items_center().cursor_pointer()
-        .on_click((_e, cx) => { this.open = open ? null : a.url; cx.notify(); })
-        .child(svg("mods/artifacts/artifact.svg").size(14).flex_none().text_color(published ? t.accent : t.dim))
-        .child(div().flex_1().min_w(0).truncate().text_color(published ? t.foreground : t.muted).child(a.title || a.url))
-        .child(div().flex_none().w(46).text_right().text_size(11).text_color(published && a.version ? t.muted : t.dim).child(tag))
-        .child(div().flex_none().w(30).text_right().text_size(11).text_color(t.dim).child(ago(a.last_ts))))
-      .when(open, (e) => e.child(v_flex().pr(8).pb(8).pl(30 + indent).gap(6)
-        .child(div().text_size(11).text_color(t.accent).truncate().cursor_pointer().on_click((_e, cx) => cx.open_url(a.url)).child(a.url))
-        .when(Boolean(a.path), (el) => el.child(div().text_size(11).text_color(t.dim).truncate().child(a.path)))
-        .child(div().text_size(11).text_color(t.dim).child(a.publishes > 0
-          ? `${a.publishes} publish${a.publishes === 1 ? "" : "es"} · first ${when(a.first_ts)} · last ${when(a.last_ts)}`
-          : a.summarized ? `published before the conversation was compacted · named ${when(a.last_ts)}`
-          : `read or opened ${a.touched}× · ${when(a.last_ts)}`))
-        .when(Boolean(a.description), (el) => el.child(div().text_size(11).text_color(t.muted).child(a.description)))
-        .child(h_flex().gap(6).pt(2)
-          .child(this.button(`open-${a.url}`, "open", "Open", t, (cx) => cx.open_url(a.url), true))
-          .child(this.button(`copy-${a.url}`, "copy", "Copy link", t, (cx) => { cx.write_to_clipboard(a.url); this.copied = a.url; cx.notify(); cx.timer.after(1500, (cx) => { this.copied = null; cx.notify(); }); }))
-          .when(this.copied === a.url, (el) => el.child(div().text_size(11).text_color(t.done ?? t.accent).child("copied"))))));
+    return h_flex().id(`art-${a.url}`).h(30).pl(8 + indent).pr(6).gap(8).items_center().rounded(7).cursor_pointer().flex_none()
+      .hover((s) => s.bg(t.hover)).on_hover(this.hoverRow(a.url))
+      .on_click((_e, cx) => cx.open_url(a.url))
+      .child(svg("mods/artifacts/artifact.svg").size(14).flex_none().text_color(published ? t.accent : t.dim))
+      .child(div().flex_1().min_w(0).truncate().text_color(published ? t.foreground : t.muted).child(a.title || a.url))
+      .child(div().flex_none().w(46).text_right().text_size(11).text_color(published && a.version ? t.muted : t.dim).child(tag))
+      .child(div().flex_none().w(30).text_right().text_size(11).text_color(t.dim).child(ago(a.last_ts)))
+      .child(this.copyControl(a.url, t, this.hovered === a.url));
   }
 
   linkRow(l, t, indent) {
-    return h_flex().id(`link-${l.url}`).h(30).pl(8 + indent).pr(6).gap(8).items_center().rounded(7).cursor_pointer().hover((s) => s.bg(t.hover))
+    return h_flex().id(`link-${l.url}`).h(30).pl(8 + indent).pr(6).gap(8).items_center().rounded(7).cursor_pointer()
+      .hover((s) => s.bg(t.hover)).on_hover(this.hoverRow(l.url))
       .on_click((_e, cx) => cx.open_url(l.url))
       .child(svg("mods/artifacts/link.svg").size(13).flex_none().text_color(t.muted))
       .child(div().flex_1().min_w(0).truncate().text_color(t.foreground).child(l.title || l.url))
       .when(Boolean(l.host) && l.title !== l.host && !l.title.startsWith(l.host), (e) => e.child(div().flex_none().max_w(120).truncate().text_size(11).text_color(t.dim).child(l.host)))
       .child(div().flex_none().w(30).text_right().text_size(11).text_color(t.dim).child(ago(l.last_ts)))
-      .child(div().id(`copy-link-${l.url}`).size(20).flex_none().flex().items_center().justify_center().rounded(5).text_color(t.dim).hover((s) => s.bg(t.raised).text_color(t.foreground))
-        .on_click((_e, cx) => { cx.stop_propagation(); cx.write_to_clipboard(l.url); this.copied = l.url; cx.notify(); cx.timer.after(1500, (cx) => { this.copied = null; cx.notify(); }); })
-        .child(this.copied === l.url ? div().text_size(10).text_color(t.done ?? t.accent).child("✓") : svg("mods/artifacts/copy.svg").size(12)));
+      .child(this.copyControl(l.url, t, this.hovered === l.url));
   }
 
   clearSearch(cx) {
@@ -248,13 +260,6 @@ export default class Artifacts extends View {
       .when(links.length > 6, (e) => e.child(div().id(`more-links-${agent.address}`).h(24).pl(8 + indent + 21).flex().items_center().text_size(11).text_color(t.muted).cursor_pointer().hover((s) => s.text_color(t.foreground))
         .on_click((_e, cx) => { this.moreLinks[agent.address] = !all; cx.notify(); })
         .child(all ? "Show fewer" : `${links.length - 6} more`)));
-  }
-
-  button(id, icon, label, t, onClick, primary = false) {
-    return h_flex().id(id).h(24).px(8).gap(5).items_center().rounded(6).cursor_pointer().text_size(11)
-      .bg(primary ? t.solid : t.raised).text_color(primary ? t.solid_foreground : t.foreground).hover((s) => s.bg(primary ? t.solid : t.hover))
-      .on_click((_e, cx) => onClick(cx))
-      .child(svg(`mods/artifacts/${icon}.svg`).size(12)).child(label);
   }
 
   // The header's two-way switch: this agent, or every agent in the space.

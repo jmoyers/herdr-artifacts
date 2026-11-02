@@ -8,8 +8,8 @@ conversation has published. Switch it to **Space** to see every agent in the
 space, grouped by conversation.
 
 Each row is an artifact: title, version, when it was last published. Click
-it for the URL, the local source file, the publish history, and **Open** and
-**Copy link** buttons. A "seen" toggle adds artifacts the session only read
+it to open it in the browser; hover it for a copy button that puts the URL
+on the clipboard. A "seen" toggle adds artifacts the session only read
 or opened. A collapsed **Links** section lists every other web link the
 agent wrote in its replies (pull requests, docs, dashboards), newest first;
 click one to open it, or its copy icon to copy it. In Space view all

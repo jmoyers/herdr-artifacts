@@ -49,8 +49,8 @@ scroll away in the terminal. A switch widens it to every agent in the space.
   "Links" in 11 px medium `dim`, the count). Open, it lists one row per
   link the agent wrote in a reply (30 px): link icon in `muted`, the
   markdown link text or host and path in `foreground`, the host in `dim`
-  when the title doesn't show it, the age, and a copy icon that turns into
-  a check for 1.5 s. Six links show; "N more" / "Show fewer" toggles the
+  when the title doesn't show it, the age, and the same hover-revealed copy
+  button. Six links show; "N more" / "Show fewer" toggles the
   rest. Clicking a link row opens it in the browser. Artifact URLs never
   appear here.
 - In Space view the body is two sections: every agent's artifacts first,
@@ -58,10 +58,10 @@ scroll away in the terminal. A switch widens it to every agent in the space.
   1 px `border` rule, which opens into per-tab groups (28 px rows with a
   chevron, status dot and the tab name in 12.5 px medium `muted`), each
   collapsible, each with its link rows indented 28 px.
-- Clicking a row expands it: the URL in `accent`, the source path relative to
-  the conversation's folder, "N publishes · first … · last …", the publish's
-  description when it had one, and two buttons: **Open** (solid) and **Copy
-  link** (raised). "copied" appears for 1.5 s after copying.
+- Clicking an artifact or link row opens it in the browser. Hovering a row
+  reveals a copy button in a reserved 20 px column at its right edge; clicking
+  it copies the URL (without opening) and shows a check mark in the theme's
+  `done` color for 1.5 s. Nothing expands in place.
 - Empty states, in 11 px `dim`: no agent in the space; a session Herdr can't
   read; no transcript yet; nothing published yet.
 
@@ -75,7 +75,7 @@ scroll away in the terminal. A switch widens it to every agent in the space.
   artifacts appear) rescans at once; otherwise every 4 s.
 - Agent status colors follow the theme's `working`, `blocked`, `done`,
   `idle`. The panel itself doesn't change an agent's status.
-- Rows open in the system browser via `cx.open_url`; Copy link uses
+- Rows open in the system browser via `cx.open_url`; the copy button uses
   `cx.write_to_clipboard`.
 - `artifacts.refresh`, `artifacts.toggle-scope`, `artifacts.toggle-links`,
   `artifacts.toggle-seen`, `artifacts.search` and `artifacts.open-latest` are mod commands for `keys.json`.
@@ -89,7 +89,7 @@ scroll away in the terminal. A switch widens it to every agent in the space.
   `button`, `scopeSwitch`, `render`. Imports `View, div, svg` from gpui-kit,
   `v_flex, h_flex` from gpui-base, and `spaces, agents, focused, exec,
   appHome, theme, nextCommand` from herdr. Icons: `artifact.svg`,
-  `open.svg`, `copy.svg`, `refresh.svg` in the mod folder, plus the shipped
+  `copy.svg`, `check.svg`, `search.svg`, `link.svg`, `refresh.svg` in the mod folder, plus the shipped
   `mods/files/chevron-*.svg` and `mods/workspace-chrome/spinner.svg`.
 - `mods/artifacts/artifacts.py` (standard library only), run with
   `exec("python3", ["-I", "<appHome>/mods/artifacts/artifacts.py",
