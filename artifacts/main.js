@@ -51,6 +51,9 @@ export default class Artifacts extends View {
     this.open = null;         // url of the expanded row
     this.collapsed = {};      // address -> true (space view)
     this.moreLinks = {};      // address -> true: show every link, not the first few
+    this.linksOpen = {};      // address -> true: Agent view's Links section expanded
+    this.collapsedLinks = {}; // address -> true: a Space-view links group folded
+    this.spaceLinksOpen = false;
     this.lastKey = "";
     let scope = null;
     try { scope = localStorage.getItem(SCOPE_KEY); } catch {}
@@ -64,6 +67,11 @@ export default class Artifacts extends View {
         if (c === "refresh") this.refresh(cx, true);
         else if (c === "toggle-scope") this.setScope(this.scope === "agent" ? "space" : "agent", cx);
         else if (c === "toggle-seen") { this.showTouched = !this.showTouched; cx.notify(); }
+        else if (c === "toggle-links") {
+          if (this.scope === "space") this.spaceLinksOpen = !this.spaceLinksOpen;
+          else for (const a of this.shown()) this.linksOpen[a.address] = !this.linksOpen[a.address];
+          cx.notify();
+        }
         else if (c === "open-latest") {
           const first = this.shown().map((a) => this.byAddress[local(a.address)]).find((e) => e?.published?.length);
           if (first) cx.open_url(first.published[0].url);
@@ -151,15 +159,11 @@ export default class Artifacts extends View {
         .child(this.copied === l.url ? div().text_size(10).text_color(t.done ?? t.accent).child("✓") : svg("mods/artifacts/copy.svg").size(12)));
   }
 
-  // The links an agent wrote in its replies, under its artifacts.
-  linksSection(agent, links, t, indent) {
-    if (!links.length) return null;
+  // The link rows of one agent, with a "more" toggle past the first six.
+  linkRows(agent, links, t, indent) {
     const all = Boolean(this.moreLinks[agent.address]);
     const shown = all ? links : links.slice(0, 6);
-    return v_flex().flex_none().gap(1).mt(6)
-      .child(h_flex().h(24).pl(8 + indent).pr(8).gap(6).items_center()
-        .child(div().text_size(11).font_medium().text_color(t.dim).child("Links"))
-        .child(div().text_size(11).text_color(t.dim).child(`${links.length}`)))
+    return v_flex().flex_none().gap(1)
       .children(shown.map((l) => this.linkRow(l, t, indent)))
       .when(links.length > 6, (e) => e.child(div().id(`more-links-${agent.address}`).h(24).pl(8 + indent + 21).flex().items_center().text_size(11).text_color(t.muted).cursor_pointer().hover((s) => s.text_color(t.foreground))
         .on_click((_e, cx) => { this.moreLinks[agent.address] = !all; cx.notify(); })
@@ -220,23 +224,76 @@ export default class Artifacts extends View {
         ? div().flex_none().text_size(11).text_color(t.dim).child("no session")
         : div().flex_none().h(18).px(7).rounded(9).bg(t.raised).flex().items_center().text_size(10.5).font_medium().text_color(t.muted).child(scan ? `${scan.published.length}` : "…"));
 
+    const note = (text, pl) => div().pl(pl).py(4).text_size(11.5).text_color(t.dim).child(text);
+    const emptyFor = (scan, items, pl) => {
+      if (scan && !scan.session) return note("Not a Claude Code session Herdr can read yet.", pl);
+      if (scan?.session && !scan.transcript) return note("No transcript yet; it appears after the first message.", pl);
+      if (scan?.transcript && !items.length) return note("Nothing published in this conversation yet.", pl);
+      return null;
+    };
+    // A collapsible section label: "Links  10" with a chevron. Links start closed in
+    // both views; artifacts are the point of the panel and stay open.
+    const sectionLabel = (id, label, count, open, onToggle, pl = 8) => h_flex().id(id).h(26).pl(pl).pr(8).gap(6).items_center().rounded(6).cursor_pointer().hover((s) => s.bg(t.hover))
+      .on_click((_e, cx) => onToggle(cx))
+      .child(svg(`mods/files/chevron-${open ? "down" : "right"}.svg`).size(12).flex_none().text_color(t.dim))
+      .child(div().text_size(11).font_medium().text_color(t.dim).child(label))
+      .child(div().text_size(11).text_color(t.dim).child(`${count}`));
+
+    const artifactItems = (scan) => [...(scan?.published ?? []), ...(this.showTouched ? scan?.touched ?? [] : [])];
+    const totalLinks = entries.reduce((n, e) => n + (e.scan?.links?.length ?? 0), 0);
+
+    let children;
+    if (single) {
+      const { agent, scan } = entries[0] ?? {};
+      const items = artifactItems(scan);
+      const linksOpen = Boolean(agent && this.linksOpen[agent.address]);
+      children = [
+        agent ? emptyFor(scan, items, 8) : null,
+        ...items.map((a) => this.row(a, t, 0)),
+        agent && scan?.links?.length
+          ? v_flex().flex_none().gap(1).mt(items.length ? 8 : 2)
+              .child(sectionLabel(`links-${agent.address}`, "Links", scan.links.length, linksOpen, (cx) => { this.linksOpen[agent.address] = !linksOpen; cx.notify(); }))
+              .when(linksOpen, (e) => e.child(this.linkRows(agent, scan.links, t, 0)))
+          : null,
+      ].filter(Boolean);
+    } else {
+      // Space view: every agent's artifacts first, then every agent's links, each
+      // grouped by tab. Artifacts are the finished work; links are the trail.
+      const artifactGroups = entries.map(({ agent, scan }, i) => {
+        const items = artifactItems(scan);
+        const folded = Boolean(this.collapsed[agent.address]);
+        return v_flex().flex_none().gap(1)
+          .child(agentLine(agent, scan, folded, i === 0))
+          .when(!folded, (el) => el.child(emptyFor(scan, items, 8 + 20 + 22) ?? div()))
+          .when(!folded, (el) => el.children(items.map((a) => this.row(a, t, 20))));
+      });
+      const withLinks = entries.filter((e) => e.scan?.links?.length);
+      const linkGroups = withLinks.map(({ agent, scan }) => {
+        const folded = Boolean(this.collapsedLinks[agent.address]);
+        return v_flex().flex_none().gap(1)
+          .child(h_flex().id(`links-agent-${agent.address}`).h(28).pl(16).pr(8).gap(8).items_center().rounded(7).cursor_pointer().hover((s) => s.bg(t.hover))
+            .on_click((_e, cx) => { this.collapsedLinks[agent.address] = !folded; cx.notify(); })
+            .child(svg(`mods/files/chevron-${folded ? "right" : "down"}.svg`).size(12).flex_none().text_color(t.dim))
+            .child(div().size(7).rounded(4).flex_none().bg(t[agent.status] ?? t.idle))
+            .child(div().flex_1().min_w(0).truncate().text_size(12.5).font_medium().text_color(t.muted).child(agent.tab_name || agent.title || scan.session_name || agent.address))
+            .child(div().flex_none().text_size(11).text_color(t.dim).child(`${scan.links.length}`)))
+          .when(!folded, (el) => el.child(this.linkRows(agent, scan.links, t, 28)));
+      });
+      children = [
+        ...artifactGroups,
+        totalLinks
+          ? v_flex().flex_none().gap(1).mt(12).pt(8).border_t(1).border_color(t.border)
+              .child(sectionLabel("links-space", "Links", totalLinks, this.spaceLinksOpen, (cx) => { this.spaceLinksOpen = !this.spaceLinksOpen; cx.notify(); }))
+              .when(this.spaceLinksOpen, (e) => e.children(linkGroups))
+          : null,
+      ].filter(Boolean);
+    }
+
     const body = v_flex().id("artifacts-list").flex_1().min_h(0).overflow_y_scrollbar().p(6).gap(2)
       .when(!all.length, (el) => el.child(this.empty("No Claude Code agent in this space yet. Start one and its artifacts appear here as it publishes them.", t)))
       .when(Boolean(this.error), (el) => el.child(div().p(10).text_color(t.ansi1).text_size(11).child(this.error)))
       .when(single && all.length > 0 && !selected, (el) => el.child(div().px(10).pt(4).pb(2).text_size(11).text_color(t.dim).child("Select an agent to see its artifacts; showing the space's first one.")))
-      .children(entries.map(({ agent, scan }, i) => {
-        const items = [...(scan?.published ?? []), ...(this.showTouched ? scan?.touched ?? [] : [])];
-        const folded = !single && Boolean(this.collapsed[agent.address]);
-        const indent = single ? 0 : 20;
-        // The group line names the tab; in Agent view there is one agent, so no group.
-        return v_flex().flex_none().gap(1)
-          .when(!single, (el) => el.child(agentLine(agent, scan, folded, i === 0)))
-          .when(!folded && scan && !scan.session, (el) => el.child(div().pl(single ? 8 : 8 + indent + 22).py(4).text_size(11.5).text_color(t.dim).child("Not a Claude Code session Herdr can read yet.")))
-          .when(!folded && scan?.session && !scan.transcript, (el) => el.child(div().pl(single ? 8 : 8 + indent + 22).py(4).text_size(11.5).text_color(t.dim).child("No transcript yet; it appears after the first message.")))
-          .when(!folded && scan?.transcript && !items.length, (el) => el.child(div().pl(single ? 8 : 8 + indent + 22).py(4).text_size(11.5).text_color(t.dim).child("Nothing published in this conversation yet.")))
-          .when(!folded, (el) => el.children(items.map((a) => this.row(a, t, indent))))
-          .when(!folded && Boolean(scan?.links?.length), (el) => el.child(this.linksSection(agent, scan.links, t, indent)));
-      }));
+      .children(children);
 
     return v_flex().id("artifacts").size_full().min_h(0).rounded(10).overflow_hidden().bg(t.background).border_1().border_color(t.border).text_color(t.foreground).text_size(13)
       .child(header).child(body);

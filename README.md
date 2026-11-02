@@ -10,9 +10,10 @@ space, grouped by conversation.
 Each row is an artifact: title, version, when it was last published. Click
 it for the URL, the local source file, the publish history, and **Open** and
 **Copy link** buttons. A "seen" toggle adds artifacts the session only read
-or opened. Under the artifacts, a **Links** section lists every other web
-link the agent wrote in its replies (pull requests, docs, dashboards), newest
-first; click one to open it, or its copy icon to copy it. The panel rescans
+or opened. A collapsed **Links** section lists every other web link the
+agent wrote in its replies (pull requests, docs, dashboards), newest first;
+click one to open it, or its copy icon to copy it. In Space view all
+artifacts come first, grouped by tab, then all links, grouped by tab. The panel rescans
 every few seconds and the moment an agent's status changes, which is when a
 turn ends and artifacts appear.
 
@@ -61,7 +62,7 @@ is one `hc get` per terminal plus a stat. `main.js` draws it with gpui-kit
 and the app's theme colors.
 
 Mod commands for `keys.json` (`"<key>": "artifacts.<command>"`): `refresh`,
-`toggle-scope`, `toggle-seen`, `open-latest`.
+`toggle-scope`, `toggle-links`, `toggle-seen`, `open-latest`.
 
 ## Limits
 

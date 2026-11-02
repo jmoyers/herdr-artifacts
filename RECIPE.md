@@ -28,13 +28,19 @@ scroll away in the terminal. A switch widens it to every agent in the space.
   rows), title in `foreground` (truncated), then two right-aligned columns:
   the tag (46 px: `v12` in `muted`, or "earlier" / "seen" in `dim`) and how
   long ago (30 px, 11 px `dim`: `now`, `5m`, `3h`, `2d`, else `Nov 2`).
-- Under an agent's artifacts, a **Links** section: a label row (24 px,
-  "Links" in 11 px medium `dim` with the count), then one row per link the
-  agent wrote in a reply (30 px): link icon in `muted`, the markdown link
-  text or host and path in `foreground`, the host in `dim` when the title
-  doesn't show it, the age, and a copy icon that turns into a check for
-  1.5 s. Six links show; "N more" / "Show fewer" toggles the rest. Clicking
-  a link row opens it in the browser. Artifact URLs never appear here.
+- A **Links** section, closed by default: a label row (26 px, chevron,
+  "Links" in 11 px medium `dim`, the count). Open, it lists one row per
+  link the agent wrote in a reply (30 px): link icon in `muted`, the
+  markdown link text or host and path in `foreground`, the host in `dim`
+  when the title doesn't show it, the age, and a copy icon that turns into
+  a check for 1.5 s. Six links show; "N more" / "Show fewer" toggles the
+  rest. Clicking a link row opens it in the browser. Artifact URLs never
+  appear here.
+- In Space view the body is two sections: every agent's artifacts first,
+  grouped under tab headers, then one closed **Links** section above a
+  1 px `border` rule, which opens into per-tab groups (28 px rows with a
+  chevron, status dot and the tab name in 12.5 px medium `muted`), each
+  collapsible, each with its link rows indented 28 px.
 - Clicking a row expands it: the URL in `accent`, the source path relative to
   the conversation's folder, "N publishes · first … · last …", the publish's
   description when it had one, and two buttons: **Open** (solid) and **Copy
@@ -54,8 +60,8 @@ scroll away in the terminal. A switch widens it to every agent in the space.
   `idle`. The panel itself doesn't change an agent's status.
 - Rows open in the system browser via `cx.open_url`; Copy link uses
   `cx.write_to_clipboard`.
-- `artifacts.refresh`, `artifacts.toggle-scope`, `artifacts.toggle-seen`
-  and `artifacts.open-latest` are mod commands for `keys.json`.
+- `artifacts.refresh`, `artifacts.toggle-scope`, `artifacts.toggle-links`,
+  `artifacts.toggle-seen` and `artifacts.open-latest` are mod commands for `keys.json`.
   `tabs-artifacts.artifacts` toggles the panel (bound to `cmd-shift-a` in
   the recipe's install).
 
