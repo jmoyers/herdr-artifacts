@@ -10,8 +10,11 @@ space, grouped by conversation.
 Each row is an artifact: title, version, when it was last published. Click
 it for the URL, the local source file, the publish history, and **Open** and
 **Copy link** buttons. A "seen" toggle adds artifacts the session only read
-or opened. The panel rescans every few seconds and the moment an agent's
-status changes, which is when a turn ends and artifacts appear.
+or opened. Under the artifacts, a **Links** section lists every other web
+link the agent wrote in its replies (pull requests, docs, dashboards), newest
+first; click one to open it, or its copy icon to copy it. The panel rescans
+every few seconds and the moment an agent's status changes, which is when a
+turn ends and artifacts appear.
 
 Herdr here is the desktop app (herdr-app on herdr-core). It is not a
 Herdr TUI plugin.

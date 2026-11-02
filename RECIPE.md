@@ -28,6 +28,13 @@ scroll away in the terminal. A switch widens it to every agent in the space.
   rows), title in `foreground` (truncated), then two right-aligned columns:
   the tag (46 px: `v12` in `muted`, or "earlier" / "seen" in `dim`) and how
   long ago (30 px, 11 px `dim`: `now`, `5m`, `3h`, `2d`, else `Nov 2`).
+- Under an agent's artifacts, a **Links** section: a label row (24 px,
+  "Links" in 11 px medium `dim` with the count), then one row per link the
+  agent wrote in a reply (30 px): link icon in `muted`, the markdown link
+  text or host and path in `foreground`, the host in `dim` when the title
+  doesn't show it, the age, and a copy icon that turns into a check for
+  1.5 s. Six links show; "N more" / "Show fewer" toggles the rest. Clicking
+  a link row opens it in the browser. Artifact URLs never appear here.
 - Clicking a row expands it: the URL in `accent`, the source path relative to
   the conversation's folder, "N publishes · first … · last …", the publish's
   description when it had one, and two buttons: **Open** (solid) and **Copy
@@ -69,7 +76,10 @@ scroll away in the terminal. A switch widens it to every agent in the space.
   "Published … at <url>", "Updated the Artifact at <url>" or "Created a new
   Artifact at <url>" is a publish, "(Version N" its version. URLs named in
   a compaction summary count as published earlier; URLs only in assistant
-  text, and reads/opens/lists, count as seen. Titles: the publish's `title`,
+  text, and reads/opens/lists, count as seen. Every other `http(s)` URL in
+  an assistant text block (not sidechains, not tool results) is a link, with
+  the markdown link text as its title, trailing punctuation stripped,
+  GitHub pull/issue URLs named `owner/repo #N`; the newest 80 are kept. Titles: the publish's `title`,
   the Claude desktop app's record of the session, the page's `<title>`, the
   comment monitor's title, a title next to the link in prose, the file name.
   Results are cached per transcript under `~/.cache/herdr-artifacts`.

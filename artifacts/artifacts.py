@@ -45,7 +45,11 @@ MENTION_RES = [
     re.compile(r"[\"“]([^\"”\n]{2,120})[\"”][^()\n]{0,40}\((?:[^()\n]{0,60}, )?(https://claude\.ai/(?:code/)?artifact/[A-Za-z0-9_-]+)[^)]*\)"),
     re.compile(r"\*\*([^*\n]{2,120})\*\*[^()\n]{0,40}\((?:[^()\n]{0,60}, )?(https://claude\.ai/(?:code/)?artifact/[A-Za-z0-9_-]+)[^)]*\)"),
 ]
-PARSER_VERSION = 3
+PARSER_VERSION = 5
+# Links the agent wrote in its replies: markdown links first, then bare URLs.
+MD_LINK_RE = re.compile(r"\[([^\]\n]{1,160})\]\((https?://[^\s)]+)\)")
+BARE_URL_RE = re.compile(r"https?://[^\s<>()\[\]\"'`]+")
+LINK_MAX = 80
 
 CACHE_DIR = os.path.join(os.environ.get("XDG_CACHE_HOME") or os.path.expanduser("~/.cache"), "herdr-artifacts")
 
@@ -157,7 +161,27 @@ def parse_transcript(path: str) -> dict:
     artifacts: dict[str, dict] = {}
     monitor_titles: dict[str, str] = {}
     mentions: dict[str, dict] = {}  # url -> {title, ts, summary: bool}
+    links: dict[str, dict] = {}     # url -> {url, title, first_ts, last_ts, count}
     cwd = ""
+
+    def note_links(text: str, ts: float) -> None:
+        """Every web link the agent put in a reply, except artifacts (listed
+        on their own). A markdown link keeps its text as the title."""
+        titles: dict[str, str] = {}
+        for m in MD_LINK_RE.finditer(text):
+            titles.setdefault(clean_link(m.group(2)), m.group(1).strip())
+        for m in BARE_URL_RE.finditer(text):
+            url = clean_link(m.group(0))
+            if not url or ARTIFACT_URL_RE.match(url):
+                continue
+            cur = links.get(url)
+            if cur is None:
+                links[url] = {"url": url, "title": titles.get(url, ""), "first_ts": ts, "last_ts": ts, "count": 1}
+            else:
+                cur["count"] += 1
+                cur["last_ts"] = max(cur["last_ts"], ts)
+                cur["first_ts"] = min(cur["first_ts"], ts) if cur["first_ts"] else ts
+                cur["title"] = cur["title"] or titles.get(url, "")
 
     def note_mentions(text: str, ts: float, summary: bool) -> None:
         titles: dict[str, str] = {}
@@ -253,6 +277,8 @@ def parse_transcript(path: str) -> dict:
                     continue
                 if block.get("type") == "text" and isinstance(block.get("text"), str) and (summary or entry.get("type") == "assistant"):
                     note_mentions(block["text"], ts, summary)
+                    if entry.get("type") == "assistant" and not entry.get("isSidechain"):
+                        note_links(block["text"], ts)
                 if block.get("type") == "tool_use" and block.get("name") == "Artifact":
                     inp = block.get("input")
                     pending[str(block.get("id"))] = (inp if isinstance(inp, dict) else {}, ts)
@@ -278,14 +304,43 @@ def parse_transcript(path: str) -> dict:
             a["title"], a["title_source"] = m["title"], "mention"
     for a in artifacts.values():
         a.setdefault("summarized", False)
-    return {"cwd": cwd, "artifacts": list(artifacts.values()), "monitor_titles": monitor_titles}
+    for l in links.values():
+        l["title"] = l["title"] or link_label(l["url"])
+        l["host"] = re.sub(r"^www\.", "", (re.match(r"https?://([^/]+)", l["url"]) or [None, ""])[1])
+    link_list = sorted(links.values(), key=lambda l: -l["last_ts"])[:LINK_MAX]
+    return {"cwd": cwd, "artifacts": list(artifacts.values()), "monitor_titles": monitor_titles, "links": link_list}
+
+
+def clean_link(url: str) -> str:
+    """A URL as written in prose, without the punctuation that followed it."""
+    url = url.rstrip(".,;:!?*_")
+    while url.endswith((")", "]", "'", '"', "`", ">")) and url.count("(") < url.count(")"):
+        url = url[:-1]
+    url = url.rstrip(".,;:!?*_'\"`>")
+    return url if re.match(r"https?://[^/\s]+", url) else ""
+
+
+def link_label(url: str) -> str:
+    """A short name for a bare URL: the host and the tail of its path."""
+    m = re.match(r"https?://([^/?#]+)([^?#]*)", url)
+    if not m:
+        return url
+    host = re.sub(r"^www\.", "", m.group(1))
+    path = m.group(2).rstrip("/")
+    gh = re.match(r"^/([^/]+)/([^/]+)/(?:pull|issues)/(\d+)", path) if host == "github.com" else None
+    if gh:
+        return f"{gh.group(1)}/{gh.group(2)} #{gh.group(3)}"
+    if not path:
+        return host
+    tail = path if len(path) <= 48 else "…" + path[-47:]
+    return f"{host}{tail}"
 
 
 def cached_parse(path: str) -> dict:
     try:
         st = os.stat(path)
     except OSError:
-        return {"cwd": "", "artifacts": [], "monitor_titles": {}}
+        return {"cwd": "", "artifacts": [], "monitor_titles": {}, "links": []}
     key = re.sub(r"[^A-Za-z0-9_.-]", "_", path)[-120:]
     cache_file = os.path.join(CACHE_DIR, key + ".json")
     try:
@@ -412,6 +467,7 @@ def main(argv: list[str]) -> int:
             "transcript": "",
             "published": [],
             "touched": [],
+            "links": [],
         }
         if session:
             sid = session["sessionId"]
@@ -429,6 +485,7 @@ def main(argv: list[str]) -> int:
                     (entry["published"] if a["publishes"] > 0 or a.get("summarized") else entry["touched"]).append(a)
                 entry["published"].sort(key=lambda a: -a["last_ts"])
                 entry["touched"].sort(key=lambda a: -a["last_ts"])
+                entry["links"] = data.get("links", [])
         out["terminals"].append(entry)
     json.dump(out, sys.stdout)
     return 0

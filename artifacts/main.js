@@ -50,6 +50,7 @@ export default class Artifacts extends View {
     this.showTouched = false;
     this.open = null;         // url of the expanded row
     this.collapsed = {};      // address -> true (space view)
+    this.moreLinks = {};      // address -> true: show every link, not the first few
     this.lastKey = "";
     let scope = null;
     try { scope = localStorage.getItem(SCOPE_KEY); } catch {}
@@ -138,6 +139,33 @@ export default class Artifacts extends View {
           .when(this.copied === a.url, (el) => el.child(div().text_size(11).text_color(t.done ?? t.accent).child("copied"))))));
   }
 
+  linkRow(l, t, indent) {
+    return h_flex().id(`link-${l.url}`).h(30).pl(8 + indent).pr(6).gap(8).items_center().rounded(7).cursor_pointer().hover((s) => s.bg(t.hover))
+      .on_click((_e, cx) => cx.open_url(l.url))
+      .child(svg("mods/artifacts/link.svg").size(13).flex_none().text_color(t.muted))
+      .child(div().flex_1().min_w(0).truncate().text_color(t.foreground).child(l.title || l.url))
+      .when(Boolean(l.host) && l.title !== l.host && !l.title.startsWith(l.host), (e) => e.child(div().flex_none().max_w(120).truncate().text_size(11).text_color(t.dim).child(l.host)))
+      .child(div().flex_none().w(30).text_right().text_size(11).text_color(t.dim).child(ago(l.last_ts)))
+      .child(div().id(`copy-link-${l.url}`).size(20).flex_none().flex().items_center().justify_center().rounded(5).text_color(t.dim).hover((s) => s.bg(t.raised).text_color(t.foreground))
+        .on_click((_e, cx) => { cx.stop_propagation(); cx.write_to_clipboard(l.url); this.copied = l.url; cx.notify(); cx.timer.after(1500, (cx) => { this.copied = null; cx.notify(); }); })
+        .child(this.copied === l.url ? div().text_size(10).text_color(t.done ?? t.accent).child("✓") : svg("mods/artifacts/copy.svg").size(12)));
+  }
+
+  // The links an agent wrote in its replies, under its artifacts.
+  linksSection(agent, links, t, indent) {
+    if (!links.length) return null;
+    const all = Boolean(this.moreLinks[agent.address]);
+    const shown = all ? links : links.slice(0, 6);
+    return v_flex().flex_none().gap(1).mt(6)
+      .child(h_flex().h(24).pl(8 + indent).pr(8).gap(6).items_center()
+        .child(div().text_size(11).font_medium().text_color(t.dim).child("Links"))
+        .child(div().text_size(11).text_color(t.dim).child(`${links.length}`)))
+      .children(shown.map((l) => this.linkRow(l, t, indent)))
+      .when(links.length > 6, (e) => e.child(div().id(`more-links-${agent.address}`).h(24).pl(8 + indent + 21).flex().items_center().text_size(11).text_color(t.muted).cursor_pointer().hover((s) => s.text_color(t.foreground))
+        .on_click((_e, cx) => { this.moreLinks[agent.address] = !all; cx.notify(); })
+        .child(all ? "Show fewer" : `${links.length - 6} more`)));
+  }
+
   button(id, icon, label, t, onClick, primary = false) {
     return h_flex().id(id).h(24).px(8).gap(5).items_center().rounded(6).cursor_pointer().text_size(11)
       .bg(primary ? t.solid : t.raised).text_color(primary ? t.solid_foreground : t.foreground).hover((s) => s.bg(primary ? t.solid : t.hover))
@@ -206,7 +234,8 @@ export default class Artifacts extends View {
           .when(!folded && scan && !scan.session, (el) => el.child(div().pl(single ? 8 : 8 + indent + 22).py(4).text_size(11.5).text_color(t.dim).child("Not a Claude Code session Herdr can read yet.")))
           .when(!folded && scan?.session && !scan.transcript, (el) => el.child(div().pl(single ? 8 : 8 + indent + 22).py(4).text_size(11.5).text_color(t.dim).child("No transcript yet; it appears after the first message.")))
           .when(!folded && scan?.transcript && !items.length, (el) => el.child(div().pl(single ? 8 : 8 + indent + 22).py(4).text_size(11.5).text_color(t.dim).child("Nothing published in this conversation yet.")))
-          .when(!folded, (el) => el.children(items.map((a) => this.row(a, t, indent))));
+          .when(!folded, (el) => el.children(items.map((a) => this.row(a, t, indent))))
+          .when(!folded && Boolean(scan?.links?.length), (el) => el.child(this.linksSection(agent, scan.links, t, indent)));
       }));
 
     return v_flex().id("artifacts").size_full().min_h(0).rounded(10).overflow_hidden().bg(t.background).border_1().border_color(t.border).text_color(t.foreground).text_size(13)
