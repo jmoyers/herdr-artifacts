@@ -18,14 +18,16 @@ scroll away in the terminal. A switch widens it to every agent in the space.
   conversation read or opened artifacts it didn't publish), an **Agent /
   Space** segmented switch (10.5 px, `selected` background on the active
   side), and a refresh icon that turns while a scan runs.
-- In Space mode, one line per agent (26 px): a chevron, a 6 px status dot in
-  the agent's status color, the agent's tab name in 12 px `muted`, and its
-  artifact count in `dim` on the right; clicking it collapses the section.
-  Agent mode has no group line, just the rows.
-- One row per artifact (28 px): page icon in `accent` (`dim` for "seen"
-  rows), title in `foreground` (truncated), then `v12` in `muted` (or
-  "earlier" / "seen" in `dim`), then how long ago in `dim` (`now`, `5m`,
-  `3h`, `2d`, else `Nov 2`).
+- In Space mode, a section header per agent (30 px, 8 px above all but the
+  first): a chevron, a 7 px status dot in the agent's status color, the tab
+  name at the rows' 13 px in medium weight and `foreground`, and a count
+  pill on the right (18 px high, `raised` background, 10.5 px `muted`).
+  Clicking it collapses the section; its rows are indented 20 px.
+  Agent mode has no section header, just the rows.
+- One row per artifact (30 px): page icon in `accent` (`dim` for "seen"
+  rows), title in `foreground` (truncated), then two right-aligned columns:
+  the tag (46 px: `v12` in `muted`, or "earlier" / "seen" in `dim`) and how
+  long ago (30 px, 11 px `dim`: `now`, `5m`, `3h`, `2d`, else `Nov 2`).
 - Clicking a row expands it: the URL in `accent`, the source path relative to
   the conversation's folder, "N publishes · first … · last …", the publish's
   description when it had one, and two buttons: **Open** (solid) and **Copy
