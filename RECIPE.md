@@ -18,6 +18,21 @@ scroll away in the terminal. A switch widens it to every agent in the space.
   conversation read or opened artifacts it didn't publish), an **Agent /
   Space** segmented switch (10.5 px, `selected` background on the active
   side), and a refresh icon that turns while a scan runs.
+- Under the header, a search box (30 px, 8 px radius, 1 px `border` that
+  turns `accent` while focused, a magnifier icon, placeholder "Search
+  artifacts and links", and at the right "this agent" or "whole space" when
+  idle, an × to clear while searching). Typing replaces the body with
+  results: a count line ("3 artifacts · 2 links · whole space · ↵ opens"),
+  then 46 px two-line rows: icon (`accent` for artifacts, `muted` for links),
+  title in `foreground`, and a `dim` 11 px detail line joining the tab name
+  (Space mode only), the path or URL, and the description; on the right the
+  tag (`v12`, "earlier", "seen", or a link's host) over the age. Every word
+  of the query must match a field; artifacts rank above links, title matches
+  above path, URL, description and tab matches, then newest first. Enter
+  opens the selected result, up/down move, hover selects, Esc clears and
+  returns focus. The box also focuses when `artifacts.search` runs or when
+  shared `artifacts.focusSearch` changes (the tab bar's
+  `tabs-artifacts.artifacts-search` sets it after showing the panel).
 - In Space mode, a section header per agent (30 px, 8 px above all but the
   first): a chevron, a 7 px status dot in the agent's status color, the tab
   name at the rows' 13 px in medium weight and `foreground`, and a count
@@ -61,9 +76,10 @@ scroll away in the terminal. A switch widens it to every agent in the space.
 - Rows open in the system browser via `cx.open_url`; Copy link uses
   `cx.write_to_clipboard`.
 - `artifacts.refresh`, `artifacts.toggle-scope`, `artifacts.toggle-links`,
-  `artifacts.toggle-seen` and `artifacts.open-latest` are mod commands for `keys.json`.
+  `artifacts.toggle-seen`, `artifacts.search` and `artifacts.open-latest` are mod commands for `keys.json`.
   `tabs-artifacts.artifacts` toggles the panel (bound to `cmd-shift-a` in
-  the recipe's install).
+  the recipe's install); `tabs-artifacts.artifacts-search` shows it and
+  focuses the search box (`cmd-shift-f`).
 
 ## Built from
 
@@ -123,6 +139,8 @@ scroll away in the terminal. A switch widens it to every agent in the space.
 - The Space side of the switch shows every agent in the space with its own
   section and count; collapsing a section hides its rows.
 - The Artifacts button in the tab bar shows and hides the panel, as does
-  `cmd-shift-a`.
+  `cmd-shift-a`; `cmd-shift-f` shows it with the search box focused, and
+  typing a word lists matching artifacts above matching links with their
+  tab, path and description.
 - `herdr-app check ~/.config/herdr-app/mods/artifacts` passes and
   `herdr-app status` lists no errors.

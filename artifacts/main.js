@@ -8,8 +8,8 @@
 // transcript, and returns the publishes. It runs every few seconds and on
 // every agent status change (a turn ending is when artifacts appear).
 import { View, div, svg } from "gpui-kit";
-import { v_flex, h_flex } from "gpui-base";
-import { spaces, agents, focused, exec, appHome, theme, nextCommand } from "herdr";
+import { v_flex, h_flex, InputState, Input } from "gpui-base";
+import { spaces, agents, focused, exec, appHome, theme, nextCommand, shared } from "herdr";
 
 const REFRESH_MS = 4000;
 const SCRIPT = () => `${appHome()}/mods/artifacts/artifacts.py`;
@@ -54,6 +54,16 @@ export default class Artifacts extends View {
     this.linksOpen = {};      // address -> true: Agent view's Links section expanded
     this.collapsedLinks = {}; // address -> true: a Space-view links group folded
     this.spaceLinksOpen = false;
+    // Search: one box over everything the view shows (the agent's, or the space's).
+    this.query = "";
+    this.typing = false;
+    this.selected = 0;
+    this.handle = cx.focus_handle();
+    this.input = InputState.new({ placeholder: "Search artifacts and links" });
+    this.input.on("change", (_e, cx) => { this.query = this.input.value(); this.selected = 0; cx.notify(); });
+    this.input.on("submit", (_e, cx) => { const r = this.results()[this.selected]; if (r) cx.open_url(r.url); });
+    this.input.on("focus", (_e, cx) => { this.typing = true; cx.notify(); });
+    this.input.on("blur", (_e, cx) => { this.typing = false; cx.notify(); });
     this.lastKey = "";
     let scope = null;
     try { scope = localStorage.getItem(SCOPE_KEY); } catch {}
@@ -67,6 +77,7 @@ export default class Artifacts extends View {
         if (c === "refresh") this.refresh(cx, true);
         else if (c === "toggle-scope") this.setScope(this.scope === "agent" ? "space" : "agent", cx);
         else if (c === "toggle-seen") { this.showTouched = !this.showTouched; cx.notify(); }
+        else if (c === "search") { this.input.focus(); cx.notify(); }
         else if (c === "toggle-links") {
           if (this.scope === "space") this.spaceLinksOpen = !this.spaceLinksOpen;
           else for (const a of this.shown()) this.linksOpen[a.address] = !this.linksOpen[a.address];
@@ -157,6 +168,72 @@ export default class Artifacts extends View {
       .child(div().id(`copy-link-${l.url}`).size(20).flex_none().flex().items_center().justify_center().rounded(5).text_color(t.dim).hover((s) => s.bg(t.raised).text_color(t.foreground))
         .on_click((_e, cx) => { cx.stop_propagation(); cx.write_to_clipboard(l.url); this.copied = l.url; cx.notify(); cx.timer.after(1500, (cx) => { this.copied = null; cx.notify(); }); })
         .child(this.copied === l.url ? div().text_size(10).text_color(t.done ?? t.accent).child("✓") : svg("mods/artifacts/copy.svg").size(12)));
+  }
+
+  clearSearch(cx) {
+    this.query = ""; this.selected = 0; this.input.set_value("");
+    this.handle.focus(); cx.notify();
+  }
+
+  // Everything the view shows, matched against the query. Artifacts first (they
+  // are the finished work), then links; within each, title matches before matches
+  // on a path, URL or tab, then newest first.
+  results() {
+    const q = this.query.trim().toLowerCase();
+    if (!q) return [];
+    const words = q.split(/\s+/);
+    const single = this.scope === "agent";
+    const out = [];
+    const score = (fields) => {
+      // Every word must appear somewhere; the best field it appears in sets the rank.
+      let total = 0;
+      for (const w of words) {
+        let best = 0;
+        fields.forEach(([text, weight]) => {
+          const i = text.indexOf(w);
+          if (i < 0) return;
+          const rank = weight + (i === 0 ? 2 : text[i - 1] === " " || text[i - 1] === "/" || text[i - 1] === "-" ? 1 : 0);
+          if (rank > best) best = rank;
+        });
+        if (!best) return 0;
+        total += best;
+      }
+      return total;
+    };
+    for (const agent of this.shown()) {
+      const scan = this.byAddress[local(agent.address)];
+      if (!scan) continue;
+      const tab = (agent.tab_name || agent.title || "").toLowerCase();
+      for (const a of [...scan.published, ...scan.touched]) {
+        const rank = score([[a.title.toLowerCase(), 10], [(a.path || "").toLowerCase(), 5], [(a.description || "").toLowerCase(), 4], [a.url.toLowerCase(), 3], [tab, 2]]);
+        if (rank) out.push({ kind: "artifact", rank: 1000 + rank, ts: a.last_ts, url: a.url, title: a.title || a.url, agent, item: a,
+          detail: [single ? null : agent.tab_name || agent.title, a.path || a.url.replace(/^https:\/\//, ""), a.description].filter(Boolean) });
+      }
+      for (const l of scan.links) {
+        const rank = score([[l.title.toLowerCase(), 10], [l.url.toLowerCase(), 4], [(l.host || "").toLowerCase(), 3], [tab, 2]]);
+        if (rank) out.push({ kind: "link", rank, ts: l.last_ts, url: l.url, title: l.title, agent, item: l,
+          detail: [single ? null : agent.tab_name || agent.title, l.url.replace(/^https?:\/\/(www\.)?/, "")].filter(Boolean) });
+      }
+    }
+    out.sort((a, b) => b.rank - a.rank || b.ts - a.ts);
+    return out.slice(0, 60);
+  }
+
+  resultRow(r, i, t) {
+    const on = i === this.selected;
+    const artifact = r.kind === "artifact";
+    const tag = artifact ? (r.item.publishes > 0 ? (r.item.version ? `v${r.item.version}` : "earlier") : r.item.summarized ? "earlier" : "seen") : "";
+    return h_flex().id(`result-${r.kind}-${r.url}`).h(46).px(8).gap(9).items_center().rounded(7).cursor_pointer()
+      .when(on, (e) => e.bg(t.selected)).hover((s) => s.bg(on ? t.selected : t.hover))
+      .on_click((_e, cx) => cx.open_url(r.url))
+      .on_hover((hovered, cx) => { if (hovered && this.selected !== i) { this.selected = i; cx.notify(); } })
+      .child(svg(`mods/artifacts/${artifact ? "artifact" : "link"}.svg`).size(14).flex_none().text_color(artifact ? t.accent : t.muted))
+      .child(v_flex().flex_1().min_w(0).gap(1)
+        .child(div().truncate().text_color(t.foreground).child(r.title))
+        .child(div().truncate().text_size(11).text_color(t.dim).child(r.detail.join("  ·  "))))
+      .child(v_flex().flex_none().items_end().gap(1)
+        .child(div().text_size(11).text_color(artifact ? t.muted : t.dim).child(tag || (r.item.host ?? "")))
+        .child(div().text_size(11).text_color(t.dim).child(ago(r.ts))));
   }
 
   // The link rows of one agent, with a "more" toggle past the first six.
@@ -289,6 +366,29 @@ export default class Artifacts extends View {
       ].filter(Boolean);
     }
 
+    // A key or the tab bar asked for the search box: "artifacts.focusSearch" holds when.
+    const asked = shared("artifacts.focusSearch");
+    if (asked && asked !== this.focusAsked) { this.focusAsked = asked; cx.timer.after(30, () => this.input.focus()); }
+
+    const searching = this.query.trim().length > 0;
+    const results = searching ? this.results() : [];
+    if (this.selected >= results.length) this.selected = Math.max(0, results.length - 1);
+    const nArt = results.filter((r) => r.kind === "artifact").length, nLink = results.length - nArt;
+    const searchBar = h_flex().flex_none().px(8).pt(8).pb(4).gap(6).items_center()
+      .child(h_flex().id("artifacts-search").flex_1().min_w(0).h(30).px(9).gap(7).items_center().rounded(8).border_1().border_color(this.typing ? t.accent : t.border).bg(t.background).cursor_text()
+        .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
+        .child(svg("mods/artifacts/search.svg").size(13).flex_none().text_color(t.dim))
+        .child(Input.new(this.input).flex_1().h_full().text_size(12.5).text_color(t.foreground))
+        .when(searching, (e) => e.child(div().id("search-clear").size(18).flex_none().flex().items_center().justify_center().rounded(4).text_size(12).text_color(t.dim).cursor_pointer().hover((s) => s.bg(t.hover).text_color(t.foreground))
+          .on_click((_e, cx) => this.clearSearch(cx)).child("×")))
+        .when(!searching && !this.typing, (e) => e.child(div().flex_none().text_size(10.5).text_color(t.dim).child(single ? "this agent" : "whole space"))));
+
+    const resultsBody = v_flex().id("artifacts-results").flex_1().min_h(0).overflow_y_scrollbar().p(6).gap(1)
+      .child(div().px(8).pb(4).text_size(11).text_color(t.dim).child(results.length
+        ? `${nArt} artifact${nArt === 1 ? "" : "s"} · ${nLink} link${nLink === 1 ? "" : "s"} · ${single ? "this agent" : "whole space"} · ↵ opens`
+        : `Nothing matches in ${single ? "this agent's conversation" : "this space"}`))
+      .children(results.map((r, i) => this.resultRow(r, i, t)));
+
     const body = v_flex().id("artifacts-list").flex_1().min_h(0).overflow_y_scrollbar().p(6).gap(2)
       .when(!all.length, (el) => el.child(this.empty("No Claude Code agent in this space yet. Start one and its artifacts appear here as it publishes them.", t)))
       .when(Boolean(this.error), (el) => el.child(div().p(10).text_color(t.ansi1).text_size(11).child(this.error)))
@@ -296,6 +396,13 @@ export default class Artifacts extends View {
       .children(children);
 
     return v_flex().id("artifacts").size_full().min_h(0).rounded(10).overflow_hidden().bg(t.background).border_1().border_color(t.border).text_color(t.foreground).text_size(13)
-      .child(header).child(body);
+      .track_focus(this.handle)
+      .on_key_down((e, cx) => {
+        if (!this.typing) return;
+        if (e.key === "escape") { this.clearSearch(cx); cx.stop_propagation(); }
+        else if (e.key === "down" && results.length) { this.selected = Math.min(results.length - 1, this.selected + 1); cx.stop_propagation(); cx.notify(); }
+        else if (e.key === "up" && results.length) { this.selected = Math.max(0, this.selected - 1); cx.stop_propagation(); cx.notify(); }
+      })
+      .child(header).child(searchBar).child(searching ? resultsBody : body);
   }
 }

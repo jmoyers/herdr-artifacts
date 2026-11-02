@@ -17,6 +17,13 @@ artifacts come first, grouped by tab, then all links, grouped by tab. The panel 
 every few seconds and the moment an agent's status changes, which is when a
 turn ends and artifacts appear.
 
+A search box sits under the header. It searches whatever the view shows: the
+selected agent's artifacts and links, or the whole space's. Artifacts rank
+first, then links; each result shows the tab it came from, its path or URL,
+and its description, so same-named pages stay apart. Enter opens the top
+result, arrows move, Esc clears. `cmd-shift-f` (or the
+`tabs-artifacts.artifacts-search` command) shows the panel and focuses it.
+
 Herdr here is the desktop app (herdr-app on herdr-core). It is not a
 Herdr TUI plugin.
 
@@ -44,8 +51,9 @@ Herdr TUI plugin.
    to the `panel-body` stack's children. Apply `patches/tabs.diff` to
    `mods/tabs-artifacts/main.js`: an Artifacts button next to Files and
    Changes, and a `tabs-artifacts.artifacts` command that toggles the panel.
-3. Optional key, in `keys.json` under `global`:
-   `"cmd-shift-a": "tabs-artifacts.artifacts"`.
+3. Optional keys, in `keys.json` under `global`:
+   `"cmd-shift-a": "tabs-artifacts.artifacts"` toggles the panel and
+   `"cmd-shift-f": "tabs-artifacts.artifacts-search"` opens it on the search box.
 
 The clones are yours and don't follow Herdr updates; `layout.reset` and the
 shipped `tabs` mod stay untouched.
@@ -62,7 +70,7 @@ is one `hc get` per terminal plus a stat. `main.js` draws it with gpui-kit
 and the app's theme colors.
 
 Mod commands for `keys.json` (`"<key>": "artifacts.<command>"`): `refresh`,
-`toggle-scope`, `toggle-links`, `toggle-seen`, `open-latest`.
+`toggle-scope`, `toggle-links`, `toggle-seen`, `search`, `open-latest`.
 
 ## Limits
 
