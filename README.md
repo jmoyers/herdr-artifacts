@@ -22,7 +22,9 @@ selected agent's artifacts and links, or the whole space's. Artifacts rank
 first, then links; each result shows the tab it came from, its path or URL,
 and its description, so same-named pages stay apart. Enter opens the top
 result, arrows move, Esc clears. `cmd-shift-f` (or the
-`tabs-artifacts.artifacts-search` command) shows the panel and focuses it.
+`tabs-artifacts.artifacts-search` command) shows the panel and focuses it;
+pressed again while the box has focus, it flips the scope between Agent and
+Space and keeps what you typed.
 
 Herdr here is the desktop app (herdr-app on herdr-core). It is not a
 Herdr TUI plugin.

@@ -77,7 +77,10 @@ export default class Artifacts extends View {
         if (c === "refresh") this.refresh(cx, true);
         else if (c === "toggle-scope") this.setScope(this.scope === "agent" ? "space" : "agent", cx);
         else if (c === "toggle-seen") { this.showTouched = !this.showTouched; cx.notify(); }
-        else if (c === "search") { this.input.focus(); cx.notify(); }
+        else if (c === "search") {
+          if (this.typing) this.setScope(this.scope === "agent" ? "space" : "agent", cx);
+          else { this.input.focus(); cx.notify(); }
+        }
         else if (c === "toggle-links") {
           if (this.scope === "space") this.spaceLinksOpen = !this.spaceLinksOpen;
           else for (const a of this.shown()) this.linksOpen[a.address] = !this.linksOpen[a.address];
@@ -367,8 +370,16 @@ export default class Artifacts extends View {
     }
 
     // A key or the tab bar asked for the search box: "artifacts.focusSearch" holds when.
+    // Asked once, it focuses the box; asked again while the box already has
+    // focus, it flips the scope (Agent <-> Space) and keeps the query.
     const asked = shared("artifacts.focusSearch");
-    if (asked && asked !== this.focusAsked) { this.focusAsked = asked; cx.timer.after(30, () => this.input.focus()); }
+    if (asked && asked !== this.focusAsked) {
+      this.focusAsked = asked;
+      cx.timer.after(30, (cx) => {
+        if (this.typing) this.setScope(this.scope === "agent" ? "space" : "agent", cx);
+        else this.input.focus();
+      });
+    }
 
     const searching = this.query.trim().length > 0;
     const results = searching ? this.results() : [];

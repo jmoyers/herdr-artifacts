@@ -32,7 +32,9 @@ scroll away in the terminal. A switch widens it to every agent in the space.
   opens the selected result, up/down move, hover selects, Esc clears and
   returns focus. The box also focuses when `artifacts.search` runs or when
   shared `artifacts.focusSearch` changes (the tab bar's
-  `tabs-artifacts.artifacts-search` sets it after showing the panel).
+  `tabs-artifacts.artifacts-search` sets it after showing the panel); when
+  the box already has focus, either one flips the scope instead and keeps
+  the query.
 - In Space mode, a section header per agent (30 px, 8 px above all but the
   first): a chevron, a 7 px status dot in the agent's status color, the tab
   name at the rows' 13 px in medium weight and `foreground`, and a count
