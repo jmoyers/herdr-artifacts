@@ -9,7 +9,7 @@
 // every agent status change (a turn ending is when artifacts appear).
 import { View, div, svg } from "gpui-kit";
 import { v_flex, h_flex, InputState, Input } from "gpui-base";
-import { spaces, agents, focused, exec, appHome, theme, nextCommand, shared } from "herdr";
+import { spaces, agents, focused, exec, appHome, theme, nextCommand, shared, readTextFile } from "herdr";
 
 const REFRESH_MS = 4000;
 const SCRIPT = () => `${appHome()}/mods/artifacts/artifacts.py`;
@@ -31,6 +31,8 @@ function when(ts) {
 
 // The core address without a machine prefix, as hc knows it.
 const local = (address) => (address.includes("/") ? address.split("/")[1] : address);
+// The machine an address lives on: "remote/t2" -> "remote", "t17" -> null (this computer).
+const machineOf = (address) => (address.includes("/") ? address.split("/")[0] : null);
 
 // The agents of the active space: the selected one first, then pinned, then by tab.
 function spaceAgents() {
@@ -87,7 +89,7 @@ export default class Artifacts extends View {
           cx.notify();
         }
         else if (c === "open-latest") {
-          const first = this.shown().map((a) => this.byAddress[local(a.address)]).find((e) => e?.published?.length);
+          const first = this.shown().map((a) => this.byAddress[a.address]).find((e) => e?.published?.length);
           if (first) cx.open_url(first.published[0].url);
         }
       }
@@ -111,26 +113,43 @@ export default class Artifacts extends View {
 
   refresh(cx, force = false) {
     const list = this.shown();
-    const addresses = list.map((a) => local(a.address));
     if (!force && this.loading) return;
     if (!force && this.inflightAt && Date.now() - this.inflightAt < REFRESH_MS - 200) return;
-    if (!addresses.length) { this.byAddress = {}; this.error = null; return; } // called from render too: no notify here
+    if (!list.length) { this.byAddress = {}; this.error = null; return; } // called from render too: no notify here
+    // One scan per machine: Claude's sessions and transcripts live where the agent runs.
+    const byMachine = new Map();
+    for (const a of list) {
+      const m = machineOf(a.address);
+      if (!byMachine.has(m)) byMachine.set(m, []);
+      byMachine.get(m).push(local(a.address));
+    }
     this.loading = true; this.inflightAt = Date.now();
     cx.spawn(async (cx) => {
-      try {
-        const r = await exec("python3", ["-I", SCRIPT(), "--terminals", addresses.join(",")]);
-        if (r.code !== 0) throw new Error((r.stderr || r.stdout).trim().split("\n").pop() || `exit ${r.code}`);
-        const data = JSON.parse(r.stdout);
-        const next = { ...this.byAddress };
-        for (const t of data.terminals ?? []) next[t.address] = t;
-        this.byAddress = next;
-        this.error = data.errors?.length ? data.errors.join("; ") : null;
-      } catch (e) {
-        this.error = `Scan failed: ${e}`;
-      } finally {
-        this.loading = false;
-        cx.notify();
-      }
+      const errors = [];
+      const next = { ...this.byAddress };
+      await Promise.all([...byMachine].map(async ([machine, addresses]) => {
+        try {
+          let r;
+          if (machine) {
+            // The script isn't on that machine: send its source and run it there.
+            this.source ??= await readTextFile(SCRIPT());
+            if (!this.source) throw new Error("artifacts.py not found");
+            r = await exec("python3", ["-I", "-c", this.source, "--terminals", addresses.join(",")], { on: machine, timeout: 20000 });
+          } else {
+            r = await exec("python3", ["-I", SCRIPT(), "--terminals", addresses.join(",")]);
+          }
+          if (r.code !== 0) throw new Error((r.stderr || r.stdout).trim().split("\n").pop() || `exit ${r.code}`);
+          const data = JSON.parse(r.stdout);
+          for (const t of data.terminals ?? []) next[machine ? `${machine}/${t.address}` : t.address] = t;
+          for (const e of data.errors ?? []) errors.push(machine ? `${machine}: ${e}` : e);
+        } catch (e) {
+          errors.push(`Scan failed${machine ? ` on ${machine}` : ""}: ${e}`);
+        }
+      }));
+      this.byAddress = next;
+      this.error = errors.length ? errors.join("; ") : null;
+      this.loading = false;
+      cx.notify();
     });
   }
 
@@ -216,7 +235,7 @@ export default class Artifacts extends View {
       return total;
     };
     for (const agent of this.shown()) {
-      const scan = this.byAddress[local(agent.address)];
+      const scan = this.byAddress[agent.address];
       if (!scan) continue;
       const tab = (agent.tab_name || agent.title || "").toLowerCase();
       for (const a of [...scan.published, ...scan.touched]) {
@@ -284,7 +303,7 @@ export default class Artifacts extends View {
     const key = `${this.scope}|${list.map((a) => `${a.address}:${a.status}`).join(",")}`;
     // A new selection or a turn ending (status change) rescans at once.
     if (key !== this.lastKey) { this.lastKey = key; this.refresh(cx, true); }
-    const entries = list.map((a) => ({ agent: a, scan: this.byAddress[local(a.address)] }));
+    const entries = list.map((a) => ({ agent: a, scan: this.byAddress[a.address] }));
     const total = entries.reduce((n, e) => n + (e.scan?.published?.length ?? 0), 0);
     const seen = entries.reduce((n, e) => n + (e.scan?.touched?.length ?? 0), 0);
     const single = this.scope === "agent";

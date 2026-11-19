@@ -93,7 +93,15 @@ scroll away in the terminal. A switch widens it to every agent in the space.
   `mods/files/chevron-*.svg` and `mods/workspace-chrome/spinner.svg`.
 - `mods/artifacts/artifacts.py` (standard library only), run with
   `exec("python3", ["-I", "<appHome>/mods/artifacts/artifacts.py",
-  "--terminals", "t1,t2"])`. For each terminal: `hc get <t> --json` →
+  "--terminals", "t1,t2"])`, once per machine: the shown agents are grouped
+  by their address's machine prefix (`remote/t2` → `remote`). For another
+  machine the script isn't installed there, so the mod reads its source once
+  with `readTextFile` and runs `exec("python3", ["-I", "-c", source,
+  "--terminals", "t2,t4"], { on: machine, timeout: 20000 })`; that machine
+  needs `python3` (3.8+) and `hc` on its PATH. Scans are keyed by the full
+  address (`remote/t2`), so same-numbered terminals on two machines stay
+  apart, and one machine failing shows its error without hiding the
+  others. For each terminal: `hc get <t> --json` →
   `foreground.pid` (then its children, 4 deep) → `~/.claude/sessions/<pid>.json`
   → `sessionId` → `~/.claude/projects/*/<sessionId>.jsonl`. It joins
   `Artifact` tool_use blocks with their tool_result by id; a result starting
