@@ -79,6 +79,9 @@ Mod commands for `keys.json` (`"<key>": "artifacts.<command>"`): `refresh`,
 - A brand-new session has no transcript until its first message.
 - Only sessions whose Claude process runs in a Herdr terminal (or under one)
   are found. Sessions in other apps are not.
+- Agents on other machines (`hc machine ls`) are scanned on that machine:
+  the mod sends `artifacts.py`'s source there and runs it with that
+  machine's `python3` (3.8+) and `hc`, which both need to be on its PATH.
 - The command palette lists Herdr's built-in commands only; mods can't add
   entries in herdr-app 0.1.x, hence the key binding.
 
