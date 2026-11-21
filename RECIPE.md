@@ -36,18 +36,27 @@ the space.
   panel the keyboard (`"focusable": true`, the `focus` command); when the
   box already has focus, `artifacts.search` flips the scope instead and keeps
   the query.
+- Under the search box, a sort row: "Sort" in 10.5 px `dim`, then Updated,
+  Created, Activity and Name as small chips (`selected` background and an
+  ↓/↑ arrow on the active one). Updated, newest first, is the default.
+  Clicking the active chip reverses it; another starts newest first (A–Z for
+  Name). Remembered. Unknown dates sort last either way; ties fall back to
+  newest updated, then newest created. Hidden while searching.
 - In Space mode, a section header per agent (30 px, 8 px above all but the
   first): a chevron, a 7 px status dot in the agent's status color, the tab
   name at the rows' 13 px in medium weight and `foreground`, and a count
   pill on the right (18 px high, `raised` background, 10.5 px `muted`).
   Clicking it collapses the section; its rows are indented 20 px.
   Agent mode has no section header, just the rows.
-- One row per artifact (30 px): page icon in `accent` for published, `muted`
+- One row per artifact (42 px, two lines; 30 px when no date is known): page icon in `accent` for published, `muted`
   for linked, `dim` for seen; title in `foreground` (`muted` for seen,
   truncated); "via <child>" in 11 px `dim` when a subagent or child agent
-  published it; then two right-aligned columns: the tag (46 px: `v12` in
-  `muted`, or "earlier" / "linked" / "seen" in `dim`) and how long ago (30 px,
-  11 px `dim`: `now`, `5m`, `3h`, `2d`, else `Nov 2`).
+  published it; a second line in 11 px `dim`: "updated 3h ago · created ~Nov 8
+  · 12 versions" (the active sort's date first; Activity adds "here 5m ago";
+  "3h ago" only for exact times under a day, "today"/"yesterday", else "Nov 9",
+  with the year when not this year, formatted by hand; "~" marks a created
+  date that is the earliest version on record); then the tag on the right
+  (46 px: `v12` in `muted`, or "earlier" / "linked" / "seen" in `dim`).
 - Three levels: **published** (this conversation, a native subagent, or a
   child terminal it started made or updated it), **linked** (the agent wrote
   its URL in a reply you read: shown by default), **seen** (only read or
@@ -134,6 +143,15 @@ the space.
   title seen in any session (`~/.cache/herdr-artifacts/titles.json`), the file
   name. Results are cached per session, keyed by the size and mtime of every
   input file. The output names the files to watch (`watch`, `watch_dirs`).
+- Dates: `DateIndex` in `artifacts.py` reads every transcript and subagent
+  transcript in every profile (one copy of a file two profiles share), the
+  hook's events, and the folders in `~/.config/herdr-artifacts/sources.txt`,
+  each from the byte offset it reached last time (complete lines only). Per
+  artifact: Version 1's version-id time (created, exact), the earliest and
+  latest version-id times, the highest version number, the newest `list`
+  "updated" day. Each artifact in the output carries `created_ts`,
+  `created_exact`, `updated_ts`, `updated_exact` (false when only a day is
+  known: noon that day), `versions` and `activity_ts`.
 
 - Layout: a clone of `main` (`layout.clone`) with the `panel-body` stack
   gaining `{ "id": "artifacts", "type": "block", "content": { "mod":
@@ -163,6 +181,7 @@ the space.
 - The transcript, `sessions/<pid>.json` and the desktop app's records are
   Claude Code internals; the hook records are the documented path and carry
   publishes if those change.
+- Herdr's runtime ignores `toLocaleDateString` options; format dates by hand.
 - Version numbers come from "(Version N" with N followed by `,` or `)`;
   "version 1793114885-93b0" is a version id, not a number.
 - Mod commands don't appear in the command palette (herdr-app 0.1.x), so

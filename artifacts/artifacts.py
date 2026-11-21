@@ -483,6 +483,228 @@ def collect(transcript: str, session_id: str) -> dict:
 
 
 # --------------------------------------------------------------------------- #
+# Dates: when each artifact was created and last updated, from every session
+# --------------------------------------------------------------------------- #
+
+# "(Version 3, version id 1795196405-7678)": the id starts with the publish time.
+VID_RE = re.compile(r"version id (\d{9,11})-[0-9a-f]+")
+# A read's header: "[Artifact … (version 1795193829-81cf) — owned by you …]"
+READ_VID_RE = re.compile(r"\(version (\d{9,11})-[0-9a-f]+\)")
+LIST_DATED_RE = re.compile(
+    r"^- (?:\([^)\n]*\) )?.+? [—-] (https://claude\.ai/(?:code/)?artifact/[A-Za-z0-9_-]+) [—-] updated (\d{4}-\d\d-\d\d)", re.M)
+# The same facts in any JSON format (exported or converted transcripts): the
+# result text names its own artifact, version and time.
+ANY_PUBLISH_RE = re.compile(
+    r"(?:Published .{0,600}? at|Updated the Artifact at|Created a new Artifact at) "
+    r"(https://claude\.ai/(?:code/)?artifact/[A-Za-z0-9_-]+) \(Version (\d+), version id (\d{9,11})", re.S)
+ANY_LIST_RE = re.compile(r"(https://claude\.ai/(?:code/)?artifact/[A-Za-z0-9_-]+) [—-] updated (\d{4}-\d\d-\d\d)")
+DATES_VERSION = 2
+
+
+def strings_in(value) -> list[str]:
+    if isinstance(value, str):
+        return [value]
+    if isinstance(value, dict):
+        return [s for v in value.values() for s in strings_in(v)]
+    if isinstance(value, list):
+        return [s for v in value for s in strings_in(v)]
+    return []
+EXTRA_SOURCES = os.path.join(os.environ.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config"), "herdr-artifacts", "sources.txt")
+
+
+def read_lines(path: str) -> list[str]:
+    try:
+        with open(path, encoding="utf-8") as fh:
+            return [l.strip() for l in fh if l.strip() and not l.lstrip().startswith("#")]
+    except OSError:
+        return []
+
+
+class DateIndex:
+    """Created and updated times for every artifact any session on this machine
+    published, read or listed. One conversation rarely holds the publish that
+    created an artifact; all of them together usually do.
+
+    Sources: a publish result's version id (exact publish time; "Version 1" is
+    the creation), a read's version id (the version current then), a `list`
+    row's "updated YYYY-MM-DD" (day only), and the hook's event records. Each
+    file is parsed once and then from where it left off (transcripts only
+    grow), so a refresh costs a stat per file plus the new lines."""
+
+    PATH = os.path.join(CACHE_DIR, "dates.json")
+
+    def __init__(self) -> None:
+        data = read_json(self.PATH)
+        ok = isinstance(data, dict) and data.get("parser") == DATES_VERSION
+        self.files: dict[str, dict] = data["files"] if ok else {}
+        self.dirty = not ok
+
+    @staticmethod
+    def sources() -> list[str]:
+        out, seen = [], {}
+        for base in claude_config_dirs():
+            for path in glob.glob(os.path.join(base, "projects", "*", "*.jsonl")) + \
+                    glob.glob(os.path.join(base, "projects", "*", "*", "subagents", "*.jsonl")):
+                # A profile copied from another holds the same transcripts: parse one.
+                rel = os.path.relpath(path, base)
+                try:
+                    size = os.path.getsize(path)
+                except OSError:
+                    continue
+                if seen.get(rel) == size:
+                    continue
+                seen[rel] = size
+                out.append(path)
+        out += glob.glob(os.path.join(STATE_DIR, "events", "*.jsonl"))
+        # Archived sessions elsewhere (e.g. a repo's exported transcripts from
+        # another machine): one folder per line in sources.txt, searched for *.jsonl.
+        for line in (read_lines(EXTRA_SOURCES)):
+            folder = os.path.expanduser(line)
+            if os.path.isdir(folder):
+                out += [p for p in glob.glob(os.path.join(folder, "**", "*.jsonl"), recursive=True) if p not in out]
+        return out
+
+    def refresh(self) -> None:
+        live = set()
+        for path in self.sources():
+            live.add(path)
+            try:
+                st = os.stat(path)
+            except OSError:
+                continue
+            e = self.files.get(path)
+            if e and e["size"] == st.st_size and e["mtime"] == st.st_mtime:
+                continue
+            if not e or st.st_size < e["offset"]:
+                e = {"offset": 0, "pending": {}, "facts": {}}
+            e["offset"] = self.parse(path, e)
+            e["size"], e["mtime"] = st.st_size, st.st_mtime
+            self.files[path] = e
+            self.dirty = True
+        for gone in [p for p in self.files if p not in live]:
+            del self.files[gone]
+            self.dirty = True
+
+    def parse(self, path: str, e: dict) -> int:
+        facts, pending = e["facts"], e["pending"]
+        hook_file = path.startswith(STATE_DIR)
+
+        def note(url: str, ts: float, n: int | None = None, day: str | None = None) -> None:
+            if not url:
+                return
+            f = facts.setdefault(canonical_url(url), {})
+            if ts:
+                f["first"] = min(f.get("first") or ts, ts)
+                f["last"] = max(f.get("last") or 0, ts)
+                if n == 1:
+                    f["v1"] = min(f.get("v1") or ts, ts)
+            if n:
+                f["vmax"] = max(f.get("vmax") or 0, n)
+            if day:
+                f["day"] = max(f.get("day") or "", day)
+
+        def on_result(action: str, url: str, ts: float, text: str) -> None:
+            if action == "list":
+                for m in LIST_DATED_RE.finditer(text):
+                    note(m.group(1), 0, day=m.group(2))
+            elif action == "publish":
+                m = PUBLISHED_RE.match(text)
+                if m:
+                    vid, vn = VID_RE.search(text), VERSION_RE.search(text)
+                    note(m.group(1), float(vid.group(1)) if vid else ts, int(vn.group(1)) if vn else None)
+            elif action == "read" and url:
+                vid = READ_VID_RE.search(text[:1200])
+                if vid:
+                    note(url, float(vid.group(1)))
+
+        offset = e["offset"]
+        try:
+            fh = open(path, "rb")
+        except OSError:
+            return offset
+        with fh:
+            fh.seek(offset)
+            for raw in fh:
+                if not raw.endswith(b"\n"):
+                    break  # a line still being written: next time
+                offset += len(raw)
+                if b"rtifact" not in raw:
+                    continue
+                try:
+                    entry = json.loads(raw)
+                except (json.JSONDecodeError, UnicodeDecodeError):
+                    continue
+                if not isinstance(entry, dict):
+                    continue
+                if hook_file:
+                    inp = entry.get("input") or {}
+                    if entry.get("tool") == "Artifact":
+                        on_result(inp.get("action") or "publish", inp.get("url") or "", float(entry.get("ts") or 0), str(entry.get("result") or ""))
+                    continue
+                message = entry.get("message")
+                if not isinstance(message, dict) or not isinstance(message.get("content"), list):
+                    # Not Claude Code's own format: look for self-describing results.
+                    text = "\n".join(strings_in(entry))
+                    for m in ANY_PUBLISH_RE.finditer(text):
+                        note(m.group(1), float(m.group(3)), int(m.group(2)))
+                    for m in ANY_LIST_RE.finditer(text):
+                        note(m.group(1), 0, day=m.group(2))
+                    continue
+                ts = parse_ts(entry.get("timestamp"))
+                for block in message["content"]:
+                    if not isinstance(block, dict):
+                        continue
+                    if block.get("type") == "tool_use" and block.get("name") == "Artifact":
+                        inp = block.get("input") if isinstance(block.get("input"), dict) else {}
+                        m = ARTIFACT_URL_RE.search(inp.get("url") or "") if isinstance(inp.get("url"), str) else None
+                        pending[str(block.get("id"))] = [inp.get("action") or "publish", m.group(0) if m else "", ts]
+                    elif block.get("type") == "tool_result":
+                        use = pending.pop(str(block.get("tool_use_id")), None)
+                        if use:
+                            on_result(use[0], use[1], use[2] or ts, result_text(block).strip())
+        if len(pending) > 200:  # calls whose results never came
+            e["pending"] = dict(list(pending.items())[-50:])
+        return offset
+
+    def dates(self) -> dict[str, dict]:
+        """url -> created_ts, created_exact, updated_ts, updated_exact, versions."""
+        merged: dict[str, dict] = {}
+        for e in self.files.values():
+            for url, f in e["facts"].items():
+                m = merged.setdefault(url, {})
+                for k in ("first", "v1"):
+                    if f.get(k):
+                        m[k] = min(m.get(k) or f[k], f[k])
+                for k in ("last", "vmax"):
+                    if f.get(k):
+                        m[k] = max(m.get(k) or 0, f[k])
+                if f.get("day"):
+                    m["day"] = max(m.get("day") or "", f["day"])
+        out = {}
+        for url, m in merged.items():
+            created = m.get("v1") or m.get("first") or 0.0
+            updated, exact = m.get("last") or 0.0, True
+            # A list row's day newer than any version we saw: the day is all we know.
+            if m.get("day") and (not updated or datetime.fromtimestamp(updated).strftime("%Y-%m-%d") < m["day"]):
+                updated, exact = datetime.strptime(m["day"], "%Y-%m-%d").timestamp() + 12 * 3600, False
+            out[url] = {"created_ts": created, "created_exact": bool(m.get("v1")), "updated_ts": updated,
+                        "updated_exact": exact, "versions": m.get("vmax") or 0}
+        return out
+
+    def save(self) -> None:
+        if not self.dirty:
+            return
+        try:
+            os.makedirs(CACHE_DIR, exist_ok=True)
+            tmp = self.PATH + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as fh:
+                json.dump({"parser": DATES_VERSION, "files": self.files}, fh)
+            os.replace(tmp, self.PATH)
+        except OSError:
+            pass
+
+
+# --------------------------------------------------------------------------- #
 # Titles
 # --------------------------------------------------------------------------- #
 
@@ -627,7 +849,7 @@ def short_path(path: str, cwd: str) -> str:
 # --------------------------------------------------------------------------- #
 
 
-def scan_terminal(address: str, detail: dict, listed: dict, registry: TitleRegistry) -> dict:
+def scan_terminal(address: str, detail: dict, listed: dict, registry: TitleRegistry, dates: dict[str, dict]) -> dict:
     session = claude_session_in({**detail, "address": address})
     entry = {
         "address": address,
@@ -655,6 +877,12 @@ def scan_terminal(address: str, detail: dict, listed: dict, registry: TitleRegis
     for a in data["artifacts"]:
         a = dict(a)
         a["path"] = short_path(a["file_path"], cwd)
+        # Created and updated on claude.ai, from every session; activity_ts is
+        # when this conversation last published, linked or read it.
+        a["activity_ts"] = a["last_ts"]
+        a.update(dates.get(a["url"]) or {"created_ts": 0.0, "created_exact": False, "updated_ts": 0.0, "updated_exact": False})
+        if a["publishes"] and not a["updated_ts"]:
+            a["updated_ts"], a["updated_exact"] = a["last_ts"], True
         if a["publishes"] > 0 or a.get("summarized"):
             entry["published"].append(a)
         elif a.get("linked"):
@@ -662,7 +890,7 @@ def scan_terminal(address: str, detail: dict, listed: dict, registry: TitleRegis
         else:
             entry["touched"].append(a)
     for key in ("published", "linked", "touched"):
-        entry[key].sort(key=lambda a: -a["last_ts"])
+        entry[key].sort(key=lambda a: -(a["updated_ts"] or a["last_ts"]))
     entry["links"] = data.get("links", [])
     entry["sources"] = {**data.get("sources", {}), "hook_session": bool(session.get("via_hook"))}
     return entry
@@ -677,6 +905,9 @@ def main(argv: list[str]) -> int:
     terminals = listing.get("terminals", []) if isinstance(listing, dict) else (listing or [])
     live = {t.get("address"): t for t in terminals if t.get("address") and t.get("state") in (None, "live")}
     registry = TitleRegistry()
+    index = DateIndex()
+    index.refresh()
+    dates = index.dates()
     os.makedirs(STATE_DIR, exist_ok=True)
     watch_dirs = [d for d in (os.path.join(b, "projects") for b in claude_config_dirs()) if os.path.isdir(d)] + [STATE_DIR]
     out = {"terminals": [], "errors": [], "watch_dirs": watch_dirs}
@@ -696,7 +927,7 @@ def main(argv: list[str]) -> int:
         if isinstance(d, dict) and d.get("parent") in details:
             details[address] = d
             children.setdefault(d["parent"], []).append(address)
-    scanned = {a: scan_terminal(a, d, live.get(a, {}), registry) for a, d in details.items()}
+    scanned = {a: scan_terminal(a, d, live.get(a, {}), registry, dates) for a, d in details.items()}
     for address in shown:
         if address not in scanned:
             continue
@@ -709,12 +940,13 @@ def main(argv: list[str]) -> int:
                 if a["url"] not in have:
                     entry["published"].append({**a, "via": name})
                     have.add(a["url"])
-        entry["published"].sort(key=lambda a: -a["last_ts"])
+        entry["published"].sort(key=lambda a: -(a["updated_ts"] or a["last_ts"]))
         entry["linked"] = [a for a in entry["linked"] if a["url"] not in have]
         entry["touched"] = [a for a in entry["touched"] if a["url"] not in have]
         entry["children"] = children.get(address, [])
         out["terminals"].append(entry)
     registry.save()
+    index.save()
     json.dump(out, sys.stdout)
     return 0
 

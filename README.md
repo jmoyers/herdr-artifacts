@@ -15,7 +15,11 @@ Each artifact is one of three levels:
 - **seen**: the agent only read or opened it. Behind the `N seen` toggle,
   which is remembered.
 
-Click a row to open it; hover for a copy button. A collapsed **Links** section
+Each row shows when the artifact was last updated and created on claude.ai
+and how many versions it has. Sort by **Updated** (default, newest first),
+**Created**, **Activity** (when this conversation last published, linked or
+read it) or **Name**; clicking the active sort again reverses it, and the
+choice is remembered. Click a row to open it; hover for a copy button. A collapsed **Links** section
 lists every other web link the agent wrote in its replies (pull requests, docs,
 dashboards). A search box covers whatever the view shows; Enter opens the top
 result, arrows move, Esc clears. `artifacts.search` focuses it and, pressed
@@ -71,6 +75,18 @@ find, each filling what the others miss:
 | Child terminals (`hc run` from the agent, e.g. hsub) | their publishes, under the parent, `via` the child |
 | Publish input, Claude desktop app records, the page's `<title>`, comment monitor, Artifact `list` results, the agent's link text, a registry of every title seen in any session | the best title, even for a bare URL |
 
+**Dates.** claude.ai has no API a mod can call, and the Artifact tool's `list`
+gives only the day of the last update. So `artifacts.py` keeps an index of
+every artifact's dates across all transcripts on the machine
+(`~/.cache/herdr-artifacts/dates.json`): a publish result's version id starts
+with the exact publish time and "Version 1" is the creation; a read's version
+id is the version current then; a `list` row gives the updated day. Each file
+is parsed once and then only its new lines (about 1.5 s to build from 1.4 GB,
+0.1 s per refresh after). A created date marked `~` is the earliest version on
+record, not Version 1. Archived transcripts from other machines can be added,
+one folder per line, in `~/.config/herdr-artifacts/sources.txt`; lines in
+other JSON formats are searched for the self-describing result text.
+
 Profiles: `~/.claude`, `$CLAUDE_CONFIG_DIR` and every `~/.claude-<name>` (one
 per account). Results are cached by the size and mtime of every input under
 `~/.cache/herdr-artifacts`.
@@ -81,7 +97,7 @@ status changes, and every 15 s as a fallback. Apart from the two clones it uses
 only documented Herdr surfaces, and its own icons.
 
 Mod commands for `keys.json` (`"<key>": "artifacts.<command>"`): `refresh`,
-`toggle-scope`, `toggle-links`, `toggle-seen`, `search`, `open-latest`.
+`toggle-scope`, `toggle-links`, `toggle-seen`, `search`, `open-latest`, `cycle-sort`, `reverse-sort`.
 
 ## Limits
 

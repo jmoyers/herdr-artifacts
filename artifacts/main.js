@@ -23,6 +23,16 @@ const ICON = (name) => `mods/artifacts/${name}.svg`;
 const SCRIPT = () => `${appHome()}/mods/artifacts/artifacts.py`;
 const SCOPE_KEY = "artifacts.scope"; // "agent" | "space", remembered on this screen
 const SEEN_KEY = "artifacts.showSeen"; // "1" when the seen toggle is on
+const SORT_KEY = "artifacts.sort";      // "<key>:<asc|desc>"
+// How the list can be ordered. Dates come from every session on this machine
+// (artifacts.py's date index): created and updated on claude.ai, and activity,
+// when this conversation last published, linked or read the artifact.
+const SORTS = [
+  { key: "updated", label: "Updated", dir: "desc", value: (a) => a.updated_ts || 0 },
+  { key: "created", label: "Created", dir: "desc", value: (a) => a.created_ts || 0 },
+  { key: "activity", label: "Activity", dir: "desc", value: (a) => a.activity_ts || a.last_ts || 0 },
+  { key: "name", label: "Name", dir: "asc", value: (a) => (a.title || a.url).toLowerCase() },
+];
 
 const store = {
   get(key) { try { return localStorage.getItem(key); } catch { return null; } },
@@ -36,11 +46,46 @@ function ago(ts) {
   if (d < 3600) return `${Math.floor(d / 60)}m`;
   if (d < 86400) return `${Math.floor(d / 3600)}h`;
   if (d < 86400 * 30) return `${Math.floor(d / 86400)}d`;
-  return new Date(ts * 1000).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+  return shortDate(new Date(ts * 1000));
 }
 
 function when(ts) {
   return ts ? new Date(ts * 1000).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }) : "";
+}
+
+// A date for the second line: "5m ago" / "3h ago" when the time is exact and
+// recent, "today" / "yesterday" when only the day is known, else "Nov 9"
+// (with the year when it isn't this year). "~" marks an estimate.
+function dateLabel(ts, exact = true) {
+  if (!ts) return "";
+  const d = new Date(ts * 1000), now = new Date();
+  const secs = Math.max(0, now.getTime() / 1000 - ts);
+  if (exact && secs < 3600) return secs < 60 ? "just now" : `${Math.floor(secs / 60)}m ago`;
+  if (exact && secs < 86400) return `${Math.floor(secs / 3600)}h ago`;
+  const day = (x) => x.toDateString();
+  if (day(d) === day(now)) return "today";
+  if (day(d) === day(new Date(now.getTime() - 86400000))) return "yesterday";
+  return shortDate(d, d.getFullYear() !== now.getFullYear());
+}
+
+// "Nov 9" or "Nov 9, 2025". Built by hand: Herdr's runtime ignores the
+// locale date options and prints 11/09/2026.
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+function shortDate(d, withYear = false) {
+  return `${MONTHS[d.getMonth()]} ${d.getDate()}${withYear ? `, ${d.getFullYear()}` : ""}`;
+}
+
+function sortItems(items, sort) {
+  const spec = SORTS.find((s) => s.key === sort.key) ?? SORTS[0];
+  const sign = sort.dir === "asc" ? 1 : -1;
+  return [...items].sort((a, b) => {
+    const x = spec.value(a), y = spec.value(b);
+    // Unknown dates go last whichever way the list runs.
+    if (spec.key !== "name" && (!x || !y)) return (y ? 1 : 0) - (x ? 1 : 0);
+    if (x !== y) return x < y ? -sign : sign;
+    // Ties (many share an updated day): newest updated, then newest created.
+    return (b.updated_ts || 0) - (a.updated_ts || 0) || (b.created_ts || 0) - (a.created_ts || 0);
+  });
 }
 
 // The core address without a machine prefix, as hc knows it.
@@ -90,6 +135,9 @@ export default class Artifacts extends View {
     this.input.on("blur", (_e, cx) => { this.typing = false; cx.notify(); });
     this.lastKey = "";
     this.scope = store.get(SCOPE_KEY) === "space" ? "space" : "agent";
+    const [sortKey, sortDir] = (store.get(SORT_KEY) || "").split(":");
+    const spec = SORTS.find((s) => s.key === sortKey) ?? SORTS[0];
+    this.sort = { key: spec.key, dir: sortDir === "asc" || sortDir === "desc" ? sortDir : spec.dir };
     this.refresh(cx);
     cx.timer.every(REFRESH_MS, (cx) => this.refresh(cx));
     // Keys bound to "artifacts.<command>" in keys.json; "focus" comes from pane.go.
@@ -99,6 +147,11 @@ export default class Artifacts extends View {
         if (c === "refresh") this.refresh(cx, true);
         else if (c === "toggle-scope") this.setScope(this.scope === "agent" ? "space" : "agent", cx);
         else if (c === "toggle-seen") this.toggleSeen(cx);
+        else if (c === "cycle-sort") {
+          const i = SORTS.findIndex((s) => s.key === this.sort.key);
+          this.setSort(SORTS[(i + 1) % SORTS.length].key, cx);
+        }
+        else if (c === "reverse-sort") this.setSort(this.sort.key, cx);
         else if (c === "focus") { this.input.focus(); cx.notify(); }
         else if (c === "search") {
           if (this.typing) this.setScope(this.scope === "agent" ? "space" : "agent", cx);
@@ -122,6 +175,17 @@ export default class Artifacts extends View {
     this.scope = scope;
     store.set(SCOPE_KEY, scope);
     this.refresh(cx, true);
+    cx.notify();
+  }
+
+  // Picking the current sort again reverses it; another one starts in its
+  // natural direction (newest first for dates, A-Z for names).
+  setSort(key, cx) {
+    const spec = SORTS.find((s) => s.key === key) ?? SORTS[0];
+    this.sort = key === this.sort.key
+      ? { key, dir: this.sort.dir === "asc" ? "desc" : "asc" }
+      : { key, dir: spec.dir };
+    store.set(SORT_KEY, `${this.sort.key}:${this.sort.dir}`);
     cx.notify();
   }
 
@@ -224,14 +288,27 @@ export default class Artifacts extends View {
     const published = a.publishes > 0 || Boolean(a.summarized);
     const linked = !published && a.linked > 0;
     const tag = levelTag(a);
-    return h_flex().id(`art-${a.url}`).h(30).pl(8 + indent).pr(6).gap(8).items_center().rounded(7).cursor_pointer().flex_none()
+    // Second line: the dates the list can sort by, the active one first.
+    const updated = dateLabel(a.updated_ts, a.updated_exact);
+    const created = a.created_ts ? `${a.created_exact ? "" : "~"}${dateLabel(a.created_ts, a.created_exact)}` : "";
+    const parts = {
+      updated: updated && `updated ${updated}`,
+      created: created && `created ${created}`,
+      activity: (a.activity_ts || a.last_ts) && `here ${dateLabel(a.activity_ts || a.last_ts)}`,
+    };
+    const order = this.sort.key === "created" ? ["created", "updated"]
+      : this.sort.key === "activity" ? ["activity", "updated", "created"] : ["updated", "created"];
+    const meta = [...order.map((k) => parts[k]), a.versions > 1 ? `${a.versions} versions` : ""].filter(Boolean).join("  ·  ");
+    return h_flex().id(`art-${a.url}`).h(meta ? 42 : 30).pl(8 + indent).pr(6).gap(8).items_center().rounded(7).cursor_pointer().flex_none()
       .hover((s) => s.bg(t.hover)).on_hover(this.hoverRow(a.url))
       .on_click((_e, cx) => cx.open_url(a.url))
       .child(svg(ICON("artifact")).size(14).flex_none().text_color(published ? t.accent : linked ? t.muted : t.dim))
-      .child(div().flex_1().min_w(0).truncate().text_color(published || linked ? t.foreground : t.muted).child(a.title || a.url))
-      .when(Boolean(a.via), (e) => e.child(div().flex_none().max_w(96).truncate().text_size(11).text_color(t.dim).child(`via ${a.via}`)))
+      .child(v_flex().flex_1().min_w(0).gap(1)
+        .child(h_flex().min_w(0).gap(6).items_center()
+          .child(div().flex_1().min_w(0).truncate().text_color(published || linked ? t.foreground : t.muted).child(a.title || a.url))
+          .when(Boolean(a.via), (e) => e.child(div().flex_none().max_w(96).truncate().text_size(11).text_color(t.dim).child(`via ${a.via}`))))
+        .when(Boolean(meta), (e) => e.child(div().truncate().text_size(11).text_color(t.dim).child(meta))))
       .child(div().flex_none().w(46).text_right().text_size(11).text_color(published && a.version ? t.muted : t.dim).child(tag))
-      .child(div().flex_none().w(30).text_right().text_size(11).text_color(t.dim).child(ago(a.last_ts)))
       .child(this.copyControl(a.url, t, this.hovered === a.url));
   }
 
@@ -282,7 +359,7 @@ export default class Artifacts extends View {
       const tab = (agent.tab_name || agent.title || "").toLowerCase();
       for (const a of [...scan.published, ...(scan.linked ?? []), ...scan.touched]) {
         const rank = score([[a.title.toLowerCase(), 10], [(a.path || "").toLowerCase(), 5], [(a.description || "").toLowerCase(), 4], [a.url.toLowerCase(), 3], [tab, 2]]);
-        if (rank) out.push({ kind: "artifact", rank: 1000 + rank, ts: a.last_ts, url: a.url, title: a.title || a.url, agent, item: a,
+        if (rank) out.push({ kind: "artifact", rank: 1000 + rank, ts: a.updated_ts || a.last_ts, url: a.url, title: a.title || a.url, agent, item: a,
           detail: [single ? null : agent.tab_name || agent.title, a.path || a.url.replace(/^https:\/\//, ""), a.description].filter(Boolean) });
       }
       for (const l of scan.links) {
@@ -385,7 +462,7 @@ export default class Artifacts extends View {
       .child(div().text_size(11).font_medium().text_color(t.dim).child(label))
       .child(div().text_size(11).text_color(t.dim).child(`${count}`));
 
-    const artifactItems = (scan) => [...(scan?.published ?? []), ...(scan?.linked ?? []), ...(this.showTouched ? scan?.touched ?? [] : [])];
+    const artifactItems = (scan) => sortItems([...(scan?.published ?? []), ...(scan?.linked ?? []), ...(this.showTouched ? scan?.touched ?? [] : [])], this.sort);
     const totalLinks = entries.reduce((n, e) => n + (e.scan?.links?.length ?? 0), 0);
 
     let children;
@@ -460,6 +537,16 @@ export default class Artifacts extends View {
           .on_click((_e, cx) => this.clearSearch(cx)).child("×")))
         .when(!searching && !this.typing, (e) => e.child(div().flex_none().text_size(10.5).text_color(t.dim).child(single ? "this agent" : "whole space"))));
 
+    const sortBar = h_flex().flex_none().px(10).pb(4).gap(2).items_center()
+      .child(div().pr(4).text_size(10.5).text_color(t.dim).child("Sort"))
+      .children(SORTS.map((s) => {
+        const on = this.sort.key === s.key;
+        const arrow = on ? (this.sort.dir === "desc" ? " ↓" : " ↑") : "";
+        return div().id(`sort-${s.key}`).px(6).py(2).rounded(4).cursor_pointer().text_size(10.5)
+          .bg(on ? t.selected : t.background).text_color(on ? t.foreground : t.dim).hover((x) => x.bg(on ? t.selected : t.hover))
+          .on_click((_e, cx) => this.setSort(s.key, cx)).child(`${s.label}${arrow}`);
+      }));
+
     const resultsBody = v_flex().id("artifacts-results").flex_1().min_h(0).overflow_y_scrollbar().p(6).gap(1)
       .child(div().px(8).pb(4).text_size(11).text_color(t.dim).child(results.length
         ? `${nArt} artifact${nArt === 1 ? "" : "s"} · ${nLink} link${nLink === 1 ? "" : "s"} · ${single ? "this agent" : "whole space"} · ↵ opens`
@@ -480,6 +567,6 @@ export default class Artifacts extends View {
         else if (e.key === "down" && results.length) { this.selected = Math.min(results.length - 1, this.selected + 1); cx.stop_propagation(); cx.notify(); }
         else if (e.key === "up" && results.length) { this.selected = Math.max(0, this.selected - 1); cx.stop_propagation(); cx.notify(); }
       })
-      .child(header).child(searchBar).child(searching ? resultsBody : body);
+      .child(header).child(searchBar).when(!searching, (e) => e.child(sortBar)).child(searching ? resultsBody : body);
   }
 }
