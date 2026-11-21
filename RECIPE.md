@@ -76,6 +76,15 @@ the space.
   1 px `border` rule, which opens into per-tab groups (28 px rows with a
   chevron, status dot and the tab name in 12.5 px medium `muted`), each
   collapsible, each with its link rows indented 28 px.
+- Archive: hovering an artifact row also reveals an archive button (reserved
+  20 px column, left of copy; `archive.svg`). Clicking it hides the artifact in
+  the active space only: `setShared("artifacts.archived", {[spaceId]: {[url]:
+  archivedAt}})`. The header gains an "N archived" toggle (styled like "N
+  seen", remembered per screen) that shows archived rows dimmed (`dim` icon,
+  `muted` title) with a restore button (`unarchive.svg`). Counts leave archived
+  rows out; when everything is archived the list says "Everything here is
+  archived in this space (N)." Search still lists archived artifacts, tagged
+  "archived".
 - Clicking an artifact or link row opens it in the browser. Hovering a row
   reveals a copy button in a reserved 20 px column at its right edge; clicking
   it copies the URL (without opening) and shows a check mark in the theme's

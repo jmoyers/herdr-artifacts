@@ -19,7 +19,16 @@ Each row shows when the artifact was last updated and created on claude.ai
 and how many versions it has. Sort by **Updated** (default, newest first),
 **Created**, **Activity** (when this conversation last published, linked or
 read it) or **Name**; clicking the active sort again reverses it, and the
-choice is remembered. Click a row to open it; hover for a copy button. A collapsed **Links** section
+choice is remembered. Click a row to open it; hover for a copy button and an
+archive button.
+
+**Archive** hides an artifact in the shown space only: archive the EverQuest
+pages in your family space and they still show in an EverQuest space. Nothing
+changes on claude.ai. An "N archived" toggle in the header shows them again
+(dimmed, with a restore button); search still finds them, marked "archived".
+The list lives in Herdr's persisted shared state (`artifacts.archived`, keyed
+by space id), so it survives restarts; a space that is closed and made again
+starts with nothing archived. A collapsed **Links** section
 lists every other web link the agent wrote in its replies (pull requests, docs,
 dashboards). A search box covers whatever the view shows; Enter opens the top
 result, arrows move, Esc clears. `artifacts.search` focuses it and, pressed
@@ -97,7 +106,7 @@ status changes, and every 15 s as a fallback. Apart from the two clones it uses
 only documented Herdr surfaces, and its own icons.
 
 Mod commands for `keys.json` (`"<key>": "artifacts.<command>"`): `refresh`,
-`toggle-scope`, `toggle-links`, `toggle-seen`, `search`, `open-latest`, `cycle-sort`, `reverse-sort`.
+`toggle-scope`, `toggle-links`, `toggle-seen`, `search`, `open-latest`, `cycle-sort`, `reverse-sort`, `toggle-archived`.
 
 ## Limits
 

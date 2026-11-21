@@ -15,7 +15,7 @@
 // or tab bar.
 import { View, div, svg } from "gpui-kit";
 import { v_flex, h_flex, InputState, Input } from "gpui-base";
-import { spaces, agents, focused, exec, appHome, theme, nextCommand, shared, watchFolder } from "herdr";
+import { spaces, agents, focused, exec, appHome, theme, nextCommand, shared, setShared, watchFolder } from "herdr";
 
 const REFRESH_MS = 15000;   // fallback; file watches and status changes do the real work
 const MIN_GAP_MS = 800;     // coalesce bursts of file changes
@@ -24,6 +24,25 @@ const SCRIPT = () => `${appHome()}/mods/artifacts/artifacts.py`;
 const SCOPE_KEY = "artifacts.scope"; // "agent" | "space", remembered on this screen
 const SEEN_KEY = "artifacts.showSeen"; // "1" when the seen toggle is on
 const SORT_KEY = "artifacts.sort";      // "<key>:<asc|desc>"
+const ARCHIVED_SHOWN_KEY = "artifacts.showArchived"; // "1" when archived rows are shown
+// Archived artifacts, per space: { [spaceId]: { [url]: archivedAt } }. Kept in
+// Herdr's persisted shared state, so it survives restarts. Archiving only
+// hides an artifact in that space; nothing changes on claude.ai.
+const ARCHIVE_KEY = "artifacts.archived";
+
+function archivedIn(spaceId) {
+  const all = shared(ARCHIVE_KEY);
+  return (spaceId && all && typeof all === "object" && all[spaceId]) || {};
+}
+
+function setArchived(spaceId, url, on) {
+  if (!spaceId) return;
+  const all = { ...((shared(ARCHIVE_KEY) && typeof shared(ARCHIVE_KEY) === "object") ? shared(ARCHIVE_KEY) : {}) };
+  const mine = { ...(all[spaceId] ?? {}) };
+  if (on) mine[url] = Date.now() / 1000; else delete mine[url];
+  if (Object.keys(mine).length) all[spaceId] = mine; else delete all[spaceId];
+  setShared(ARCHIVE_KEY, all);
+}
 // How the list can be ordered. Dates come from every session on this machine
 // (artifacts.py's date index): created and updated on claude.ai, and activity,
 // when this conversation last published, linked or read the artifact.
@@ -116,6 +135,7 @@ export default class Artifacts extends View {
     this.loading = false;
     this.error = null;
     this.showTouched = store.get(SEEN_KEY) === "1";
+    this.showArchived = store.get(ARCHIVED_SHOWN_KEY) === "1";
     this.watching = new Set();  // folders with a watch loop
     this.watched = [];          // files whose change should rescan (from the last scan)
     this.hovered = null;      // url of the row under the pointer
@@ -148,6 +168,7 @@ export default class Artifacts extends View {
         if (c === "refresh") this.refresh(cx, true);
         else if (c === "toggle-scope") this.setScope(this.scope === "agent" ? "space" : "agent", cx);
         else if (c === "toggle-seen") this.toggleSeen(cx);
+        else if (c === "toggle-archived") this.toggleArchived(cx);
         else if (c === "cycle-sort") {
           const i = SORTS.findIndex((s) => s.key === this.sort.key);
           this.setSort(SORTS[(i + 1) % SORTS.length].key, cx);
@@ -187,6 +208,12 @@ export default class Artifacts extends View {
       ? { key, dir: this.sort.dir === "asc" ? "desc" : "asc" }
       : { key, dir: spec.dir };
     store.set(SORT_KEY, `${this.sort.key}:${this.sort.dir}`);
+    cx.notify();
+  }
+
+  toggleArchived(cx) {
+    this.showArchived = !this.showArchived;
+    store.set(ARCHIVED_SHOWN_KEY, this.showArchived ? "1" : "0");
     cx.notify();
   }
 
@@ -275,6 +302,16 @@ export default class Artifacts extends View {
       .child(svg(ICON(copied ? "check" : "copy")).size(12));
   }
 
+  // Archive (or restore) in the shown space: same reserved column trick as copy.
+  archiveControl(a, t, visible) {
+    if (!visible) return div().size(20).flex_none();
+    const space = spaces().find((s) => s.active)?.id;
+    return div().id(`archive-${a.url}`).size(20).flex_none().flex().items_center().justify_center().rounded(5).cursor_pointer()
+      .text_color(t.dim).hover((s) => s.bg(t.raised).text_color(t.foreground))
+      .on_click((_e, cx) => { cx.stop_propagation(); setArchived(space, a.url, !a.archived); cx.notify(); })
+      .child(svg(ICON(a.archived ? "unarchive" : "archive")).size(12));
+  }
+
   hoverRow(url) {
     return (over, cx) => {
       const next = over ? url : (this.hovered === url ? null : this.hovered);
@@ -306,10 +343,11 @@ export default class Artifacts extends View {
       .hover((s) => s.bg(t.hover)).on_hover(this.hoverRow(a.url))
       .on_click((_e, cx) => cx.open_url(a.url))
       .child(h_flex().h(20).min_w(0).gap(8).items_center()
-        .child(svg(ICON("artifact")).size(14).flex_none().text_color(published ? t.accent : linked ? t.muted : t.dim))
-        .child(div().flex_1().min_w(0).truncate().text_color(published || linked ? t.foreground : t.muted).child(a.title || a.url))
+        .child(svg(ICON("artifact")).size(14).flex_none().text_color(a.archived ? t.dim : published ? t.accent : linked ? t.muted : t.dim))
+        .child(div().flex_1().min_w(0).truncate().text_color((published || linked) && !a.archived ? t.foreground : t.muted).child(a.title || a.url))
         .when(Boolean(a.via), (e) => e.child(div().flex_none().max_w(96).truncate().text_size(11).text_color(t.dim).child(`via ${a.via}`)))
         .when(Boolean(tag), (e) => e.child(div().flex_none().w(46).text_right().text_size(11).text_color(a.version ? t.muted : t.dim).child(tag)))
+        .child(this.archiveControl(a, t, this.hovered === a.url))
         .child(this.copyControl(a.url, t, this.hovered === a.url)))
       .when(Boolean(meta), (e) => e.child(div().pl(22).min_w(0).truncate().text_size(11).text_color(t.dim).child(meta)));
   }
@@ -359,7 +397,9 @@ export default class Artifacts extends View {
       const scan = this.byAddress[local(agent.address)];
       if (!scan) continue;
       const tab = (agent.tab_name || agent.title || "").toLowerCase();
-      for (const a of [...scan.published, ...(scan.linked ?? []), ...scan.touched]) {
+      const archived = archivedIn(spaces().find((s) => s.active)?.id);
+      for (const a0 of [...scan.published, ...(scan.linked ?? []), ...scan.touched]) {
+        const a = archived[a0.url] ? { ...a0, archived: true } : a0;
         const rank = score([[a.title.toLowerCase(), 10], [(a.path || "").toLowerCase(), 5], [(a.description || "").toLowerCase(), 4], [a.url.toLowerCase(), 3], [tab, 2]]);
         if (rank) out.push({ kind: "artifact", rank: 1000 + rank, ts: a.updated_ts || a.last_ts, url: a.url, title: a.title || a.url, agent, item: a,
           detail: [single ? null : agent.tab_name || agent.title, a.path || a.url.replace(/^https:\/\//, ""), a.description].filter(Boolean) });
@@ -377,7 +417,7 @@ export default class Artifacts extends View {
   resultRow(r, i, t) {
     const on = i === this.selected;
     const artifact = r.kind === "artifact";
-    const tag = artifact ? levelTag(r.item) : "";
+    const tag = artifact ? (r.item.archived ? "archived" : levelTag(r.item)) : "";
     return h_flex().id(`result-${r.kind}-${r.url}`).h(46).px(8).gap(9).items_center().rounded(7).cursor_pointer()
       .when(on, (e) => e.bg(t.selected)).hover((s) => s.bg(on ? t.selected : t.hover))
       .on_click((_e, cx) => cx.open_url(r.url))
@@ -425,14 +465,21 @@ export default class Artifacts extends View {
     // A new selection or a turn ending (status change) rescans at once.
     if (key !== this.lastKey) { this.lastKey = key; cx.timer.after(0, (cx) => this.refresh(cx, true)); }
     const entries = list.map((a) => ({ agent: a, scan: this.byAddress[local(a.address)] }));
-    const total = entries.reduce((n, e) => n + (e.scan?.published?.length ?? 0) + (e.scan?.linked?.length ?? 0), 0);
-    const seen = entries.reduce((n, e) => n + (e.scan?.touched?.length ?? 0), 0);
+    const archived = archivedIn(spaces().find((s) => s.active)?.id);
+    const mark = (list) => (list ?? []).map((a) => (archived[a.url] ? { ...a, archived: true } : a));
+    const visible = (list) => mark(list).filter((a) => !a.archived);
+    const total = entries.reduce((n, e) => n + visible(e.scan?.published).length + visible(e.scan?.linked).length, 0);
+    const seen = entries.reduce((n, e) => n + visible(e.scan?.touched).length, 0);
+    const nArchived = new Set(entries.flatMap((e) => [...mark(e.scan?.published), ...mark(e.scan?.linked), ...mark(e.scan?.touched)])
+      .filter((a) => a.archived).map((a) => a.url)).size;
     const single = this.scope === "agent";
 
     const header = h_flex().h(42).flex_none().px(14).gap(8).items_center().border_b(1).border_color(t.border)
       .child(div().font_semibold().child("Artifacts"))
       .child(div().px(5).py(1).rounded(4).border_1().border_color(t.border).text_size(10).text_color(t.muted).child(`${total}`))
       .child(div().flex_1())
+      .when(nArchived > 0, (el) => el.child(div().id("toggle-archived").px(6).py(2).rounded(5).cursor_pointer().text_size(10.5).text_color(this.showArchived ? t.foreground : t.dim).bg(this.showArchived ? t.selected : t.background).hover((s) => s.bg(t.hover))
+        .on_click((_e, cx) => this.toggleArchived(cx)).child(`${nArchived} archived`)))
       .when(seen > 0, (el) => el.child(div().id("toggle-seen").px(6).py(2).rounded(5).cursor_pointer().text_size(10.5).text_color(this.showTouched ? t.foreground : t.dim).bg(this.showTouched ? t.selected : t.background).hover((s) => s.bg(t.hover))
         .on_click((_e, cx) => this.toggleSeen(cx)).child(`${seen} seen`)))
       .when(all.length > 1 || this.scope === "space", (el) => el.child(this.scopeSwitch(t)))
@@ -453,6 +500,7 @@ export default class Artifacts extends View {
     const emptyFor = (scan, items, pl) => {
       if (scan && !scan.session) return note("Not a Claude Code session Herdr can read yet.", pl);
       if (scan?.session && !scan.transcript) return note("No transcript yet; it appears after the first message.", pl);
+      if (scan?.transcript && !items.length && nArchived && !this.showArchived) return note(`Everything here is archived in this space (${nArchived}).`, pl);
       if (scan?.transcript && !items.length) return note(scan.touched?.length && !this.showTouched ? "Nothing published or linked yet; it only looked at some (seen)." : "Nothing published or linked in this conversation yet.", pl);
       return null;
     };
@@ -464,7 +512,8 @@ export default class Artifacts extends View {
       .child(div().text_size(11).font_medium().text_color(t.dim).child(label))
       .child(div().text_size(11).text_color(t.dim).child(`${count}`));
 
-    const artifactItems = (scan) => sortItems([...(scan?.published ?? []), ...(scan?.linked ?? []), ...(this.showTouched ? scan?.touched ?? [] : [])], this.sort);
+    const artifactItems = (scan) => sortItems([...mark(scan?.published), ...mark(scan?.linked), ...(this.showTouched ? mark(scan?.touched) : [])]
+      .filter((a) => this.showArchived || !a.archived), this.sort);
     const totalLinks = entries.reduce((n, e) => n + (e.scan?.links?.length ?? 0), 0);
 
     let children;
