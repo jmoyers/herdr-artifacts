@@ -3,17 +3,31 @@
 // the "Space" toggle in its header shows every agent in the space, grouped.
 // Click a row for its URL, path and publish history, with Open and Copy link.
 //
-// Data comes from artifacts.py (next to this file): it maps each terminal to
-// its Claude Code session through the process id, reads the session
-// transcript, and returns the publishes. It runs every few seconds and on
-// every agent status change (a turn ending is when artifacts appear).
+// Data comes from artifacts.py (next to this file): it merges the session
+// transcript, subagent transcripts, the hook's records (hook.py), child
+// terminals and every title source into published / linked / seen. It runs
+// when a watched file changes (the transcripts and hook records of the shown
+// sessions), on every agent status change (a turn ending), and on a slow timer
+// as a fallback.
+//
+// Only documented Herdr surfaces: mod.json docks it on the right, its own
+// icons, `artifacts.<command>` keys, `watchFolder`, `exec`. No cloned layout
+// or tab bar.
 import { View, div, svg } from "gpui-kit";
 import { v_flex, h_flex, InputState, Input } from "gpui-base";
-import { spaces, agents, focused, exec, appHome, theme, nextCommand, shared } from "herdr";
+import { spaces, agents, focused, exec, appHome, theme, nextCommand, shared, watchFolder } from "herdr";
 
-const REFRESH_MS = 4000;
+const REFRESH_MS = 15000;   // fallback; file watches and status changes do the real work
+const MIN_GAP_MS = 800;     // coalesce bursts of file changes
+const ICON = (name) => `mods/artifacts/${name}.svg`;
 const SCRIPT = () => `${appHome()}/mods/artifacts/artifacts.py`;
 const SCOPE_KEY = "artifacts.scope"; // "agent" | "space", remembered on this screen
+const SEEN_KEY = "artifacts.showSeen"; // "1" when the seen toggle is on
+
+const store = {
+  get(key) { try { return localStorage.getItem(key); } catch { return null; } },
+  set(key, value) { try { localStorage.setItem(key, value); } catch {} },
+};
 
 function ago(ts) {
   if (!ts) return "";
@@ -32,6 +46,14 @@ function when(ts) {
 // The core address without a machine prefix, as hc knows it.
 const local = (address) => (address.includes("/") ? address.split("/")[1] : address);
 
+// published: v3 (or "earlier" when made before a compaction cut); linked: the
+// agent sent you a link to it; seen: it only read or opened it.
+function levelTag(a) {
+  if (a.publishes > 0) return a.version ? `v${a.version}` : "earlier";
+  if (a.summarized) return "earlier";
+  return a.linked > 0 ? "linked" : "seen";
+}
+
 // The agents of the active space: the selected one first, then pinned, then by tab.
 function spaceAgents() {
   const space = spaces().find((s) => s.active);
@@ -47,7 +69,9 @@ export default class Artifacts extends View {
     this.byAddress = {};      // address -> scan entry
     this.loading = false;
     this.error = null;
-    this.showTouched = false;
+    this.showTouched = store.get(SEEN_KEY) === "1";
+    this.watching = new Set();  // folders with a watch loop
+    this.watched = [];          // files whose change should rescan (from the last scan)
     this.hovered = null;      // url of the row under the pointer
     this.collapsed = {};      // address -> true (space view)
     this.moreLinks = {};      // address -> true: show every link, not the first few
@@ -65,18 +89,17 @@ export default class Artifacts extends View {
     this.input.on("focus", (_e, cx) => { this.typing = true; cx.notify(); });
     this.input.on("blur", (_e, cx) => { this.typing = false; cx.notify(); });
     this.lastKey = "";
-    let scope = null;
-    try { scope = localStorage.getItem(SCOPE_KEY); } catch {}
-    this.scope = scope === "space" ? "space" : "agent";
+    this.scope = store.get(SCOPE_KEY) === "space" ? "space" : "agent";
     this.refresh(cx);
     cx.timer.every(REFRESH_MS, (cx) => this.refresh(cx));
-    // Keys bound to "artifacts.<command>" in keys.json.
+    // Keys bound to "artifacts.<command>" in keys.json; "focus" comes from pane.go.
     cx.spawn(async (cx) => {
       for (;;) {
         const c = await nextCommand();
         if (c === "refresh") this.refresh(cx, true);
         else if (c === "toggle-scope") this.setScope(this.scope === "agent" ? "space" : "agent", cx);
-        else if (c === "toggle-seen") { this.showTouched = !this.showTouched; cx.notify(); }
+        else if (c === "toggle-seen") this.toggleSeen(cx);
+        else if (c === "focus") { this.input.focus(); cx.notify(); }
         else if (c === "search") {
           if (this.typing) this.setScope(this.scope === "agent" ? "space" : "agent", cx);
           else { this.input.focus(); cx.notify(); }
@@ -87,8 +110,9 @@ export default class Artifacts extends View {
           cx.notify();
         }
         else if (c === "open-latest") {
-          const first = this.shown().map((a) => this.byAddress[local(a.address)]).find((e) => e?.published?.length);
-          if (first) cx.open_url(first.published[0].url);
+          const scans = this.shown().map((a) => this.byAddress[local(a.address)]).filter(Boolean);
+          const first = scans.map((e) => e.published?.[0] ?? e.linked?.[0]).find(Boolean);
+          if (first) cx.open_url(first.url);
         }
       }
     });
@@ -96,9 +120,41 @@ export default class Artifacts extends View {
 
   setScope(scope, cx) {
     this.scope = scope;
-    try { localStorage.setItem(SCOPE_KEY, scope); } catch {}
+    store.set(SCOPE_KEY, scope);
     this.refresh(cx, true);
     cx.notify();
+  }
+
+  toggleSeen(cx) {
+    this.showTouched = !this.showTouched;
+    store.set(SEEN_KEY, this.showTouched ? "1" : "0");
+    cx.notify();
+  }
+
+  // One watch loop per folder the scanner names (each profile's projects folder
+  // and the hook's state folder). A change rescans only when it touches a file
+  // of a shown session; a returned root path means "anything may have changed".
+  // A watch that fails leaves the timer as the fallback.
+  watch(dirs, cx) {
+    for (const dir of dirs ?? []) {
+      if (this.watching.has(dir)) continue;
+      this.watching.add(dir);
+      cx.spawn(async (cx) => {
+        for (;;) {
+          let paths;
+          try { paths = await watchFolder(dir); } catch { this.watching.delete(dir); return; }
+          const all = !paths?.length || paths.includes(dir);
+          if (all || paths.some((p) => this.watched.some((w) => p.startsWith(w)))) this.refreshSoon(cx);
+        }
+      });
+    }
+  }
+
+  refreshSoon(cx) {
+    if (this.soon) return;
+    const wait = Math.max(0, MIN_GAP_MS - (Date.now() - (this.inflightAt ?? 0)));
+    this.soon = true;
+    cx.timer.after(wait, (cx) => { this.soon = false; this.refresh(cx, true); });
   }
 
   // The agents this view shows: the selected one, or every agent in the space.
@@ -125,6 +181,9 @@ export default class Artifacts extends View {
         for (const t of data.terminals ?? []) next[t.address] = t;
         this.byAddress = next;
         this.error = data.errors?.length ? data.errors.join("; ") : null;
+        // What to watch: the files that feed the shown sessions.
+        this.watched = (data.terminals ?? []).flatMap((t) => t.watch ?? []);
+        this.watch(data.watch_dirs, cx);
       } catch (e) {
         this.error = `Scan failed: ${e}`;
       } finally {
@@ -148,7 +207,7 @@ export default class Artifacts extends View {
         this.copied = url; cx.notify();
         cx.timer.after(1500, (cx) => { if (this.copied === url) this.copied = null; cx.notify(); });
       })
-      .child(svg(`mods/artifacts/${copied ? "check" : "copy"}.svg`).size(12));
+      .child(svg(ICON(copied ? "check" : "copy")).size(12));
   }
 
   hoverRow(url) {
@@ -163,12 +222,14 @@ export default class Artifacts extends View {
     // "summarized": named in a compaction summary, so published before the
     // transcript was cut; its versions are not on record.
     const published = a.publishes > 0 || Boolean(a.summarized);
-    const tag = published ? (a.version ? `v${a.version}` : "earlier") : "seen";
+    const linked = !published && a.linked > 0;
+    const tag = levelTag(a);
     return h_flex().id(`art-${a.url}`).h(30).pl(8 + indent).pr(6).gap(8).items_center().rounded(7).cursor_pointer().flex_none()
       .hover((s) => s.bg(t.hover)).on_hover(this.hoverRow(a.url))
       .on_click((_e, cx) => cx.open_url(a.url))
-      .child(svg("mods/artifacts/artifact.svg").size(14).flex_none().text_color(published ? t.accent : t.dim))
-      .child(div().flex_1().min_w(0).truncate().text_color(published ? t.foreground : t.muted).child(a.title || a.url))
+      .child(svg(ICON("artifact")).size(14).flex_none().text_color(published ? t.accent : linked ? t.muted : t.dim))
+      .child(div().flex_1().min_w(0).truncate().text_color(published || linked ? t.foreground : t.muted).child(a.title || a.url))
+      .when(Boolean(a.via), (e) => e.child(div().flex_none().max_w(96).truncate().text_size(11).text_color(t.dim).child(`via ${a.via}`)))
       .child(div().flex_none().w(46).text_right().text_size(11).text_color(published && a.version ? t.muted : t.dim).child(tag))
       .child(div().flex_none().w(30).text_right().text_size(11).text_color(t.dim).child(ago(a.last_ts)))
       .child(this.copyControl(a.url, t, this.hovered === a.url));
@@ -178,7 +239,7 @@ export default class Artifacts extends View {
     return h_flex().id(`link-${l.url}`).h(30).pl(8 + indent).pr(6).gap(8).items_center().rounded(7).cursor_pointer()
       .hover((s) => s.bg(t.hover)).on_hover(this.hoverRow(l.url))
       .on_click((_e, cx) => cx.open_url(l.url))
-      .child(svg("mods/artifacts/link.svg").size(13).flex_none().text_color(t.muted))
+      .child(svg(ICON("link")).size(13).flex_none().text_color(t.muted))
       .child(div().flex_1().min_w(0).truncate().text_color(t.foreground).child(l.title || l.url))
       .when(Boolean(l.host) && l.title !== l.host && !l.title.startsWith(l.host), (e) => e.child(div().flex_none().max_w(120).truncate().text_size(11).text_color(t.dim).child(l.host)))
       .child(div().flex_none().w(30).text_right().text_size(11).text_color(t.dim).child(ago(l.last_ts)))
@@ -219,7 +280,7 @@ export default class Artifacts extends View {
       const scan = this.byAddress[local(agent.address)];
       if (!scan) continue;
       const tab = (agent.tab_name || agent.title || "").toLowerCase();
-      for (const a of [...scan.published, ...scan.touched]) {
+      for (const a of [...scan.published, ...(scan.linked ?? []), ...scan.touched]) {
         const rank = score([[a.title.toLowerCase(), 10], [(a.path || "").toLowerCase(), 5], [(a.description || "").toLowerCase(), 4], [a.url.toLowerCase(), 3], [tab, 2]]);
         if (rank) out.push({ kind: "artifact", rank: 1000 + rank, ts: a.last_ts, url: a.url, title: a.title || a.url, agent, item: a,
           detail: [single ? null : agent.tab_name || agent.title, a.path || a.url.replace(/^https:\/\//, ""), a.description].filter(Boolean) });
@@ -237,12 +298,12 @@ export default class Artifacts extends View {
   resultRow(r, i, t) {
     const on = i === this.selected;
     const artifact = r.kind === "artifact";
-    const tag = artifact ? (r.item.publishes > 0 ? (r.item.version ? `v${r.item.version}` : "earlier") : r.item.summarized ? "earlier" : "seen") : "";
+    const tag = artifact ? levelTag(r.item) : "";
     return h_flex().id(`result-${r.kind}-${r.url}`).h(46).px(8).gap(9).items_center().rounded(7).cursor_pointer()
       .when(on, (e) => e.bg(t.selected)).hover((s) => s.bg(on ? t.selected : t.hover))
       .on_click((_e, cx) => cx.open_url(r.url))
       .on_hover((hovered, cx) => { if (hovered && this.selected !== i) { this.selected = i; cx.notify(); } })
-      .child(svg(`mods/artifacts/${artifact ? "artifact" : "link"}.svg`).size(14).flex_none().text_color(artifact ? t.accent : t.muted))
+      .child(svg(ICON(artifact ? "artifact" : "link")).size(14).flex_none().text_color(artifact ? t.accent : t.muted))
       .child(v_flex().flex_1().min_w(0).gap(1)
         .child(div().truncate().text_color(t.foreground).child(r.title))
         .child(div().truncate().text_size(11).text_color(t.dim).child(r.detail.join("  ·  "))))
@@ -283,9 +344,9 @@ export default class Artifacts extends View {
     const list = this.shown();
     const key = `${this.scope}|${list.map((a) => `${a.address}:${a.status}`).join(",")}`;
     // A new selection or a turn ending (status change) rescans at once.
-    if (key !== this.lastKey) { this.lastKey = key; this.refresh(cx, true); }
+    if (key !== this.lastKey) { this.lastKey = key; cx.timer.after(0, (cx) => this.refresh(cx, true)); }
     const entries = list.map((a) => ({ agent: a, scan: this.byAddress[local(a.address)] }));
-    const total = entries.reduce((n, e) => n + (e.scan?.published?.length ?? 0), 0);
+    const total = entries.reduce((n, e) => n + (e.scan?.published?.length ?? 0) + (e.scan?.linked?.length ?? 0), 0);
     const seen = entries.reduce((n, e) => n + (e.scan?.touched?.length ?? 0), 0);
     const single = this.scope === "agent";
 
@@ -294,37 +355,37 @@ export default class Artifacts extends View {
       .child(div().px(5).py(1).rounded(4).border_1().border_color(t.border).text_size(10).text_color(t.muted).child(`${total}`))
       .child(div().flex_1())
       .when(seen > 0, (el) => el.child(div().id("toggle-seen").px(6).py(2).rounded(5).cursor_pointer().text_size(10.5).text_color(this.showTouched ? t.foreground : t.dim).bg(this.showTouched ? t.selected : t.background).hover((s) => s.bg(t.hover))
-        .on_click((_e, cx) => { this.showTouched = !this.showTouched; cx.notify(); }).child(`${seen} seen`)))
+        .on_click((_e, cx) => this.toggleSeen(cx)).child(`${seen} seen`)))
       .when(all.length > 1 || this.scope === "space", (el) => el.child(this.scopeSwitch(t)))
       .child(div().id("refresh").size(20).flex().items_center().justify_center().rounded(5).cursor_pointer().text_color(t.dim).hover((s) => s.bg(t.hover))
         .on_click((_e, cx) => this.refresh(cx, true))
-        .child(this.loading ? svg("mods/workspace-chrome/spinner.svg").size(12).spin(900) : svg("mods/artifacts/refresh.svg").size(12)));
+        .child(this.loading ? svg(ICON("spinner")).size(12).spin(900) : svg(ICON("refresh")).size(12)));
 
     const agentLine = (agent, scan, folded, first) => h_flex().id(`agent-${agent.address}`).h(30).when(!first, (e) => e.mt(8)).px(8).gap(8).items_center().rounded(7)
       .cursor_pointer().hover((s) => s.bg(t.hover)).on_click((_e, cx) => { this.collapsed[agent.address] = !folded; cx.notify(); })
-      .child(svg(`mods/files/chevron-${folded ? "right" : "down"}.svg`).size(12).flex_none().text_color(t.dim))
+      .child(svg(ICON(`chevron-${folded ? "right" : "down"}`)).size(12).flex_none().text_color(t.dim))
       .child(div().size(7).rounded(4).flex_none().bg(t[agent.status] ?? t.idle))
       .child(div().flex_1().min_w(0).truncate().font_medium().text_color(t.foreground).child(agent.tab_name || agent.title || scan?.session_name || agent.address))
       .child(scan && !scan.session
         ? div().flex_none().text_size(11).text_color(t.dim).child("no session")
-        : div().flex_none().h(18).px(7).rounded(9).bg(t.raised).flex().items_center().text_size(10.5).font_medium().text_color(t.muted).child(scan ? `${scan.published.length}` : "…"));
+        : div().flex_none().h(18).px(7).rounded(9).bg(t.raised).flex().items_center().text_size(10.5).font_medium().text_color(t.muted).child(scan ? `${scan.published.length + (scan.linked?.length ?? 0)}` : "…"));
 
     const note = (text, pl) => div().pl(pl).py(4).text_size(11.5).text_color(t.dim).child(text);
     const emptyFor = (scan, items, pl) => {
       if (scan && !scan.session) return note("Not a Claude Code session Herdr can read yet.", pl);
       if (scan?.session && !scan.transcript) return note("No transcript yet; it appears after the first message.", pl);
-      if (scan?.transcript && !items.length) return note("Nothing published in this conversation yet.", pl);
+      if (scan?.transcript && !items.length) return note(scan.touched?.length && !this.showTouched ? "Nothing published or linked yet; it only looked at some (seen)." : "Nothing published or linked in this conversation yet.", pl);
       return null;
     };
     // A collapsible section label: "Links  10" with a chevron. Links start closed in
     // both views; artifacts are the point of the panel and stay open.
     const sectionLabel = (id, label, count, open, onToggle, pl = 8) => h_flex().id(id).h(26).pl(pl).pr(8).gap(6).items_center().rounded(6).cursor_pointer().hover((s) => s.bg(t.hover))
       .on_click((_e, cx) => onToggle(cx))
-      .child(svg(`mods/files/chevron-${open ? "down" : "right"}.svg`).size(12).flex_none().text_color(t.dim))
+      .child(svg(ICON(`chevron-${open ? "down" : "right"}`)).size(12).flex_none().text_color(t.dim))
       .child(div().text_size(11).font_medium().text_color(t.dim).child(label))
       .child(div().text_size(11).text_color(t.dim).child(`${count}`));
 
-    const artifactItems = (scan) => [...(scan?.published ?? []), ...(this.showTouched ? scan?.touched ?? [] : [])];
+    const artifactItems = (scan) => [...(scan?.published ?? []), ...(scan?.linked ?? []), ...(this.showTouched ? scan?.touched ?? [] : [])];
     const totalLinks = entries.reduce((n, e) => n + (e.scan?.links?.length ?? 0), 0);
 
     let children;
@@ -358,7 +419,7 @@ export default class Artifacts extends View {
         return v_flex().flex_none().gap(1)
           .child(h_flex().id(`links-agent-${agent.address}`).h(28).pl(16).pr(8).gap(8).items_center().rounded(7).cursor_pointer().hover((s) => s.bg(t.hover))
             .on_click((_e, cx) => { this.collapsedLinks[agent.address] = !folded; cx.notify(); })
-            .child(svg(`mods/files/chevron-${folded ? "right" : "down"}.svg`).size(12).flex_none().text_color(t.dim))
+            .child(svg(ICON(`chevron-${folded ? "right" : "down"}`)).size(12).flex_none().text_color(t.dim))
             .child(div().size(7).rounded(4).flex_none().bg(t[agent.status] ?? t.idle))
             .child(div().flex_1().min_w(0).truncate().text_size(12.5).font_medium().text_color(t.muted).child(agent.tab_name || agent.title || scan.session_name || agent.address))
             .child(div().flex_none().text_size(11).text_color(t.dim).child(`${scan.links.length}`)))
@@ -393,7 +454,7 @@ export default class Artifacts extends View {
     const searchBar = h_flex().flex_none().px(8).pt(8).pb(4).gap(6).items_center()
       .child(h_flex().id("artifacts-search").flex_1().min_w(0).h(30).px(9).gap(7).items_center().rounded(8).border_1().border_color(this.typing ? t.accent : t.border).bg(t.background).cursor_text()
         .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
-        .child(svg("mods/artifacts/search.svg").size(13).flex_none().text_color(t.dim))
+        .child(svg(ICON("search")).size(13).flex_none().text_color(t.dim))
         .child(Input.new(this.input).flex_1().h_full().text_size(12.5).text_color(t.foreground))
         .when(searching, (e) => e.child(div().id("search-clear").size(18).flex_none().flex().items_center().justify_center().rounded(4).text_size(12).text_color(t.dim).cursor_pointer().hover((s) => s.bg(t.hover).text_color(t.foreground))
           .on_click((_e, cx) => this.clearSearch(cx)).child("×")))

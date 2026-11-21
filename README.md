@@ -2,89 +2,83 @@
 
 ![Artifacts](preview.png)
 
-A [Herdr](https://herdr.dev) mod: a panel beside Files and Changes that lists
+A [Herdr](https://herdr.dev) mod: a panel docked on the right that lists
 every [claude.ai artifact](https://claude.ai) the selected Claude Code agent's
-conversation has published. Switch it to **Space** to see every agent in the
-space, grouped by conversation.
+conversation made or pointed you to. Switch it to **Space** to see every agent
+in the space, grouped by conversation.
 
-Each row is an artifact: title, version, when it was last published. Click
-it to open it in the browser; hover it for a copy button that puts the URL
-on the clipboard. A "seen" toggle adds artifacts the session only read
-or opened. A collapsed **Links** section lists every other web link the
-agent wrote in its replies (pull requests, docs, dashboards), newest first;
-click one to open it, or its copy icon to copy it. In Space view all
-artifacts come first, grouped by tab, then all links, grouped by tab. The panel rescans
-every few seconds and the moment an agent's status changes, which is when a
-turn ends and artifacts appear.
+Each artifact is one of three levels:
+- **published** (`v3`): this conversation made or updated it, or a subagent or
+  child agent it started did (`via …`). `earlier` means it was made before the
+  transcript was compacted.
+- **linked**: the agent gave you a link to it in a reply. Shown by default.
+- **seen**: the agent only read or opened it. Behind the `N seen` toggle,
+  which is remembered.
 
-A search box sits under the header. It searches whatever the view shows: the
-selected agent's artifacts and links, or the whole space's. Artifacts rank
-first, then links; each result shows the tab it came from, its path or URL,
-and its description, so same-named pages stay apart. Enter opens the top
-result, arrows move, Esc clears. `cmd-shift-f` (or the
-`tabs-artifacts.artifacts-search` command) shows the panel and focuses it;
-pressed again while the box has focus, it flips the scope between Agent and
-Space and keeps what you typed.
+Click a row to open it; hover for a copy button. A collapsed **Links** section
+lists every other web link the agent wrote in its replies (pull requests, docs,
+dashboards). A search box covers whatever the view shows; Enter opens the top
+result, arrows move, Esc clears. `artifacts.search` focuses it and, pressed
+again, flips Agent and Space.
 
-Herdr here is the desktop app (herdr-app on herdr-core). It is not a
-Herdr TUI plugin.
+Herdr here is the desktop app (herdr-app on herdr-core), not the TUI.
 
 ## Install
 
-1. Get the mod into Herdr's mods folder:
+```sh
+git clone https://github.com/jmoyers/herdr-artifacts
+cp -R herdr-artifacts/artifacts ~/.config/herdr-app/mods/artifacts
+python3 ~/.config/herdr-app/mods/artifacts/install.py   # Claude Code hooks, every profile
+```
 
-   ```sh
-   git clone https://github.com/jmoyers/herdr-artifacts
-   cp -R herdr-artifacts/artifacts ~/.config/herdr-app/mods/artifacts
-   ```
+Restart Herdr once: on the first start that sees the folder, Herdr docks the
+panel on the right of the shown layout (`mod.json`: `"place": "right"`). No
+layout or tab-bar clone is needed, so Herdr updates keep applying. Keys, in
+`keys.json` under `global`:
+`"cmd-shift-a": "layout.toggle:artifacts"` and `"cmd-shift-f": "artifacts.search"`.
 
-   Or ask your agent: the `RECIPE.md` in this repo is a brief it can build
-   from, and `patches/` has the exact layout and tab-bar changes.
-2. Herdr's own layout and tab bar are read-only, so clone them and seat the panel:
-
-   ```sh
-   herdr-app do layout.clone '{"name":"main","as":"main-artifacts"}'
-   herdr-app do mod.clone '{"name":"tabs","as":"tabs-artifacts"}'
-   ```
-
-   In `layouts/main-artifacts.json`, set the `tabs` block's content to
-   `{"mod": "tabs-artifacts"}` and append
-   `{"id": "artifacts", "type": "block", "content": {"mod": "artifacts"}}`
-   to the `panel-body` stack's children. Apply `patches/tabs.diff` to
-   `mods/tabs-artifacts/main.js`: an Artifacts button next to Files and
-   Changes, and a `tabs-artifacts.artifacts` command that toggles the panel.
-3. Optional keys, in `keys.json` under `global`:
-   `"cmd-shift-a": "tabs-artifacts.artifacts"` toggles the panel and
-   `"cmd-shift-f": "tabs-artifacts.artifacts-search"` opens it on the search box.
-
-The clones are yours and don't follow Herdr updates; `layout.reset` and the
-shipped `tabs` mod stay untouched.
+`install.py --check` shows where the hooks are; `install.py --remove` takes
+them out. New Claude Code sessions pick them up; running ones still show,
+through their transcripts.
 
 ## How it works
 
-`artifacts.py` maps each herdr-core terminal to its Claude Code session with
-no hook: `hc get <t>` names the foreground process, and Claude Code writes
-`~/.claude/sessions/<pid>.json` with the session id. The session transcript
-at `~/.claude/projects/<cwd>/<session>.jsonl` holds every Artifact tool call
-with its result ("Published … at <url> (Version N …)"). Parsed results are
-cached by file size and mtime under `~/.cache/herdr-artifacts`, so a refresh
-is one `hc get` per terminal plus a stat. `main.js` draws it with gpui-kit
-and the app's theme colors.
+`artifacts.py` builds one picture per conversation from every source it can
+find, each filling what the others miss:
+
+| Source | Gives |
+|---|---|
+| Hook `SessionStart` record (`~/.local/state/herdr-artifacts/terminals/<t>.json`) | terminal → session, transcript, profile; follows `/clear` and `/resume` |
+| The Claude process in the terminal and `<profile>/sessions/<pid>.json` | terminal → session for sessions started before the hook |
+| Session transcript | every Artifact call and result, the agent's replies (linked), compaction summaries (earlier) |
+| Subagent transcripts (`<session>/subagents/*.jsonl`) | artifacts a native subagent published |
+| Hook `PostToolUse` events (`…/events/<session>.jsonl`) | structured Artifact calls, including any the transcript lacks or words differently |
+| Child terminals (`hc run` from the agent, e.g. hsub) | their publishes, under the parent, `via` the child |
+| Publish input, Claude desktop app records, the page's `<title>`, comment monitor, Artifact `list` results, the agent's link text, a registry of every title seen in any session | the best title, even for a bare URL |
+
+Profiles: `~/.claude`, `$CLAUDE_CONFIG_DIR` and every `~/.claude-<name>` (one
+per account). Results are cached by the size and mtime of every input under
+`~/.cache/herdr-artifacts`.
+
+`main.js` rescans when a file feeding a shown session changes (`watchFolder`
+on each profile's `projects` folder and the hook state folder), when an agent's
+status changes, and every 15 s as a fallback. It uses only documented Herdr
+surfaces and its own icons.
 
 Mod commands for `keys.json` (`"<key>": "artifacts.<command>"`): `refresh`,
 `toggle-scope`, `toggle-links`, `toggle-seen`, `search`, `open-latest`.
 
 ## Limits
 
-- A brand-new session has no transcript until its first message.
-- Only sessions whose Claude process runs in a Herdr terminal (or under one)
-  are found. Sessions in other apps are not.
-- The command palette lists Herdr's built-in commands only; mods can't add
-  entries in herdr-app 0.1.x, hence the key binding.
+- A brand-new session shows nothing until its first message or hook record.
+- Only sessions whose Claude process runs in a Herdr terminal on this machine
+  are found. Sessions in other apps, or on a remote Herdr machine, are not.
+- The transcript and the desktop app's records are Claude Code internals; if a
+  release changes them, the hook records still carry publishes.
 
 ## Credits
 
-`patches/tabs.diff` modifies Herdr's shipped `tabs` mod, which is part of
+`chevron-*.svg` and `spinner.svg` are copied from Herdr's shipped mods, part of
 [herdrdev/herdr-app](https://github.com/herdrdev/herdr-app) (Apache-2.0).
 Everything else here is MIT.
 

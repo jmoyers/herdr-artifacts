@@ -1,1 +1,1 @@
-{ "place": "none", "title": "Artifacts" }
+{ "place": "right", "size": 360, "title": "Artifacts", "focusable": true }
