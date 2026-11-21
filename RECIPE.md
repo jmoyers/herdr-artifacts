@@ -1,17 +1,18 @@
 # Artifacts
 
-A panel docked on the right that lists every claude.ai artifact the selected
-Claude Code agent's conversation published or pointed you to, so the links
-don't scroll away in the terminal. A switch widens it to every agent in the
-space. It uses only documented Herdr surfaces: no cloned layout or tab bar.
+A panel beside Files and Changes that lists every claude.ai artifact the
+selected Claude Code agent's conversation published or pointed you to, so the
+links don't scroll away in the terminal. A switch widens it to every agent in
+the space.
 
 ![Artifacts](preview.png)
 
 ## What you see
 
-- The panel docks in its own column on the right (360 px, `mod.json`
-  `"place": "right"`), shown and hidden with `layout.toggle:artifacts`
-  (`cmd-shift-a`).
+- A third button, **Artifacts**, at the right end of the tab bar next to
+  Files and Changes, with a page icon. Clicking it shows the panel in the
+  right-hand column (the same column Files and Changes use) and hides it
+  again on a second click.
 - The panel is a card: theme `background`, 1 px `border`, 10 px radius.
 - Header, 42 px: "Artifacts" in semibold 13 px, a small bordered count badge
   (10 px text, `muted`), then on the right: an "N seen" toggle (only when the
@@ -88,7 +89,9 @@ space. It uses only documented Herdr surfaces: no cloned layout or tab bar.
   `cx.write_to_clipboard`.
 - `artifacts.refresh`, `artifacts.toggle-scope`, `artifacts.toggle-links`,
   `artifacts.toggle-seen`, `artifacts.search` and `artifacts.open-latest` are mod commands for `keys.json`
-  (`cmd-shift-f`: `artifacts.search`; `cmd-shift-a`: `layout.toggle:artifacts`).
+  `tabs-artifacts.artifacts` toggles the panel (`cmd-shift-a`);
+  `tabs-artifacts.artifacts-search` shows it and focuses the search box
+  (`cmd-shift-f`).
 
 ## Built from
 
@@ -132,6 +135,17 @@ space. It uses only documented Herdr surfaces: no cloned layout or tab bar.
   name. Results are cached per session, keyed by the size and mtime of every
   input file. The output names the files to watch (`watch`, `watch_dirs`).
 
+- Layout: a clone of `main` (`layout.clone`) with the `panel-body` stack
+  gaining `{ "id": "artifacts", "type": "block", "content": { "mod":
+  "artifacts" } }` and the `tabs` block pointing at `tabs-artifacts`.
+  `mod.json` keeps `"place": "none"`.
+- `mods/tabs-artifacts`: a clone of the shipped `tabs` with
+  `panelButton("artifacts", "Artifacts", "mods/artifacts/artifact.svg")`
+  appended after Changes, `"artifacts"` always in the enabled panel list,
+  and a `nextCommand()` loop that toggles a panel by id with
+  `layout.select {stack: "panel-body", child}` and `layout.show/hide {id:
+  "panel"}` (see `patches/tabs.diff`).
+
 ## Watch out
 
 - `herdr-app check` renders once with no agents: never call `cx.notify()`
@@ -141,8 +155,11 @@ space. It uses only documented Herdr surfaces: no cloned layout or tab bar.
 - A brand-new session has no transcript until its first message, and a
   compacted or teleported one has lost its publish records: only what its
   summary names is recoverable.
-- Herdr docks a new mod only at app start, the first time it sees the folder
-  (recorded in `seen.json`), into the layout shown then.
+- Herdr's shipped layouts are replaced on every start and take no structural
+  change, and `mod.json`'s `place` does not dock a mod into them: the panel
+  needs the cloned layout and tab bar below, and clones never follow Herdr
+  updates. Redo them when `herdr-app --version` passes their
+  `cloned_from.version` and Herdr's `main` or `tabs` changed.
 - The transcript, `sessions/<pid>.json` and the desktop app's records are
   Claude Code internals; the hook records are the documented path and carry
   publishes if those change.
@@ -159,7 +176,8 @@ space. It uses only documented Herdr surfaces: no cloned layout or tab bar.
 - Selecting another agent changes the list within a second.
 - The Space side of the switch shows every agent in the space with its own
   section and count; collapsing a section hides its rows.
-- `cmd-shift-a` shows and hides the panel; `cmd-shift-f` focuses its search box, and
+- The Artifacts button in the tab bar shows and hides the panel, as does
+  `cmd-shift-a`; `cmd-shift-f` shows it with the search box focused, and
   typing a word lists matching artifacts above matching links with their
   tab, path and description.
 - A link the agent writes in a reply appears as "linked" within a second of
