@@ -91,12 +91,13 @@ function sortItems(items, sort) {
 // The core address without a machine prefix, as hc knows it.
 const local = (address) => (address.includes("/") ? address.split("/")[1] : address);
 
-// published: v3 (or "earlier" when made before a compaction cut); linked: the
-// agent sent you a link to it; seen: it only read or opened it.
+// Only a published artifact gets a tag: its version here (v3), or "earlier"
+// when it was made before a compaction cut. Linked and seen rows show their
+// level by the icon's colour alone.
 function levelTag(a) {
   if (a.publishes > 0) return a.version ? `v${a.version}` : "earlier";
   if (a.summarized) return "earlier";
-  return a.linked > 0 ? "linked" : "seen";
+  return "";
 }
 
 // The agents of the active space: the selected one first, then pinned, then by tab.
@@ -308,7 +309,7 @@ export default class Artifacts extends View {
         .child(svg(ICON("artifact")).size(14).flex_none().text_color(published ? t.accent : linked ? t.muted : t.dim))
         .child(div().flex_1().min_w(0).truncate().text_color(published || linked ? t.foreground : t.muted).child(a.title || a.url))
         .when(Boolean(a.via), (e) => e.child(div().flex_none().max_w(96).truncate().text_size(11).text_color(t.dim).child(`via ${a.via}`)))
-        .child(div().flex_none().w(46).text_right().text_size(11).text_color(published && a.version ? t.muted : t.dim).child(tag))
+        .when(Boolean(tag), (e) => e.child(div().flex_none().w(46).text_right().text_size(11).text_color(a.version ? t.muted : t.dim).child(tag)))
         .child(this.copyControl(a.url, t, this.hovered === a.url)))
       .when(Boolean(meta), (e) => e.child(div().pl(22).min_w(0).truncate().text_size(11).text_color(t.dim).child(meta)));
   }

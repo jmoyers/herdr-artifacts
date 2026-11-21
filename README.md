@@ -8,11 +8,11 @@ conversation made or pointed you to. Switch it to **Space** to see every agent
 in the space, grouped by conversation.
 
 Each artifact is one of three levels:
-- **published** (`v3`): this conversation made or updated it, or a subagent or
+- **published** (accent icon, `v3`): this conversation made or updated it, or a subagent or
   child agent it started did (`via …`). `earlier` means it was made before the
   transcript was compacted.
-- **linked**: the agent gave you a link to it in a reply. Shown by default.
-- **seen**: the agent only read or opened it. Behind the `N seen` toggle,
+- **linked** (grey icon): the agent gave you a link to it in a reply. Shown by default.
+- **seen** (dim icon and title): the agent only read or opened it. Behind the `N seen` toggle,
   which is remembered.
 
 Each row shows when the artifact was last updated and created on claude.ai

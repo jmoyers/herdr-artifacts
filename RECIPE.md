@@ -27,7 +27,7 @@ the space.
   then 46 px two-line rows: icon (`accent` for artifacts, `muted` for links),
   title in `foreground`, and a `dim` 11 px detail line joining the tab name
   (Space mode only), the path or URL, and the description; on the right the
-  tag (`v12`, "earlier", "linked", "seen", or a link's host) over the age. Every word
+  tag (`v12` or "earlier" for published artifacts, a link's host) over the age. Every word
   of the query must match a field; artifacts rank above links, title matches
   above path, URL, description and tab matches, then newest first. Enter
   opens the selected result, up/down move, hover selects, Esc clears and
@@ -55,8 +55,9 @@ the space.
   · 12 versions" (the active sort's date first; Activity adds "here 5m ago";
   "3h ago" only for exact times under a day, "today"/"yesterday", else "Nov 9",
   with the year when not this year, formatted by hand; "~" marks a created
-  date that is the earliest version on record); then the tag on the right
-  (46 px: `v12` in `muted`, or "earlier" / "linked" / "seen" in `dim`).
+  date that is the earliest version on record); then, for published rows only,
+  a tag on the right (46 px: `v12` in `muted`, or "earlier" in `dim`). Linked
+  and seen rows have no tag: the icon's colour shows the level.
 - Three levels: **published** (this conversation, a native subagent, or a
   child terminal it started made or updated it), **linked** (the agent wrote
   its URL in a reply you read: shown by default), **seen** (only read or
