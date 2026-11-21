@@ -48,10 +48,10 @@ the space.
   pill on the right (18 px high, `raised` background, 10.5 px `muted`).
   Clicking it collapses the section; its rows are indented 20 px.
   Agent mode has no section header, just the rows.
-- One row per artifact (42 px, two lines; 30 px when no date is known): page icon in `accent` for published, `muted`
+- One row per artifact (42 px, two lines; 30 px when no date is known). Line one, 20 px, everything centred on the title: page icon in `accent` for published, `muted`
   for linked, `dim` for seen; title in `foreground` (`muted` for seen,
   truncated); "via <child>" in 11 px `dim` when a subagent or child agent
-  published it; a second line in 11 px `dim`: "updated 3h ago · created ~Nov 8
+  published it; a second line, indented 22 px to start under the title, in 11 px `dim`: "updated 3h ago · created ~Nov 8
   · 12 versions" (the active sort's date first; Activity adds "here 5m ago";
   "3h ago" only for exact times under a day, "today"/"yesterday", else "Nov 9",
   with the year when not this year, formatted by hand; "~" marks a created

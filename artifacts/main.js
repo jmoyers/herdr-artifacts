@@ -299,17 +299,18 @@ export default class Artifacts extends View {
     const order = this.sort.key === "created" ? ["created", "updated"]
       : this.sort.key === "activity" ? ["activity", "updated", "created"] : ["updated", "created"];
     const meta = [...order.map((k) => parts[k]), a.versions > 1 ? `${a.versions} versions` : ""].filter(Boolean).join("  ·  ");
-    return h_flex().id(`art-${a.url}`).h(meta ? 42 : 30).pl(8 + indent).pr(6).gap(8).items_center().rounded(7).cursor_pointer().flex_none()
+    // Line one: icon, title, via, tag and copy, all centred on the title. Line
+    // two: the dates, starting under the title (icon 14 px + gap 8 px).
+    return v_flex().id(`art-${a.url}`).h(meta ? 42 : 30).pl(8 + indent).pr(6).gap(1).justify_center().rounded(7).cursor_pointer().flex_none()
       .hover((s) => s.bg(t.hover)).on_hover(this.hoverRow(a.url))
       .on_click((_e, cx) => cx.open_url(a.url))
-      .child(svg(ICON("artifact")).size(14).flex_none().text_color(published ? t.accent : linked ? t.muted : t.dim))
-      .child(v_flex().flex_1().min_w(0).gap(1)
-        .child(h_flex().min_w(0).gap(6).items_center()
-          .child(div().flex_1().min_w(0).truncate().text_color(published || linked ? t.foreground : t.muted).child(a.title || a.url))
-          .when(Boolean(a.via), (e) => e.child(div().flex_none().max_w(96).truncate().text_size(11).text_color(t.dim).child(`via ${a.via}`))))
-        .when(Boolean(meta), (e) => e.child(div().truncate().text_size(11).text_color(t.dim).child(meta))))
-      .child(div().flex_none().w(46).text_right().text_size(11).text_color(published && a.version ? t.muted : t.dim).child(tag))
-      .child(this.copyControl(a.url, t, this.hovered === a.url));
+      .child(h_flex().h(20).min_w(0).gap(8).items_center()
+        .child(svg(ICON("artifact")).size(14).flex_none().text_color(published ? t.accent : linked ? t.muted : t.dim))
+        .child(div().flex_1().min_w(0).truncate().text_color(published || linked ? t.foreground : t.muted).child(a.title || a.url))
+        .when(Boolean(a.via), (e) => e.child(div().flex_none().max_w(96).truncate().text_size(11).text_color(t.dim).child(`via ${a.via}`)))
+        .child(div().flex_none().w(46).text_right().text_size(11).text_color(published && a.version ? t.muted : t.dim).child(tag))
+        .child(this.copyControl(a.url, t, this.hovered === a.url)))
+      .when(Boolean(meta), (e) => e.child(div().pl(22).min_w(0).truncate().text_size(11).text_color(t.dim).child(meta)));
   }
 
   linkRow(l, t, indent) {
