@@ -482,7 +482,7 @@ export default class Artifacts extends View {
         .on_click((_e, cx) => this.toggleArchived(cx)).child(`${nArchived} archived`)))
       .when(seen > 0, (el) => el.child(div().id("toggle-seen").px(6).py(2).rounded(5).cursor_pointer().text_size(10.5).text_color(this.showTouched ? t.foreground : t.dim).bg(this.showTouched ? t.selected : t.background).hover((s) => s.bg(t.hover))
         .on_click((_e, cx) => this.toggleSeen(cx)).child(`${seen} seen`)))
-      .when(all.length > 1 || this.scope === "space", (el) => el.child(this.scopeSwitch(t)))
+      .child(this.scopeSwitch(t)) // always: a lone agent today may have company tomorrow, and the choice is remembered
       .child(div().id("refresh").size(20).flex().items_center().justify_center().rounded(5).cursor_pointer().text_color(t.dim).hover((s) => s.bg(t.hover))
         .on_click((_e, cx) => this.refresh(cx, true))
         .child(this.loading ? svg(ICON("spinner")).size(12).spin(900) : svg(ICON("refresh")).size(12)));

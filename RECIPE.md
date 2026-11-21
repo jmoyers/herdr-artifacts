@@ -18,7 +18,8 @@ the space.
   (10 px text, `muted`), then on the right: an "N seen" toggle (only when the
   conversation read or opened artifacts it didn't publish), an **Agent /
   Space** segmented switch (10.5 px, `selected` background on the active
-  side), and a refresh icon that turns while a scan runs.
+  side; always shown, even with one agent in the space), and a refresh icon
+  that turns while a scan runs.
 - Under the header, a search box (30 px, 8 px radius, 1 px `border` that
   turns `accent` while focused, a magnifier icon, placeholder "Search
   artifacts and links", and at the right "this agent" or "whole space" when
